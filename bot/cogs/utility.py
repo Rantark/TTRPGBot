@@ -201,81 +201,155 @@ class UtilityCog(commands.Cog, name="Utility"):
         except discord.Forbidden:
             await ctx.send("I can't send you a DM. Please enable DMs from server members in your privacy settings.")
 
+    # Category definitions for !commands
+    HELP_CATEGORIES = {
+        "campaign": {
+            "title": "Campaign Management",
+            "description": "Create and manage your campaign.",
+            "commands": (
+                "`!newcampaign [name]` — Create a new campaign (you become DM)\n"
+                "`!pitch <title> | <desc>` — Propose a campaign concept\n"
+                "`!pitches` — View all pitches\n"
+                "`!vote <#>` — Vote for a pitch\n"
+                "`!selectpitch <#>` — DM selects a pitch\n"
+                "`!startcampaign` — DM begins the adventure\n"
+                "`!endcampaign` — DM ends the campaign\n"
+                "`!campaigninfo` — View campaign status"
+            ),
+        },
+        "character": {
+            "title": "Character Creation & Sheets",
+            "description": "Build and view your character.",
+            "commands": (
+                "`!createchar` — Start interactive character creation\n"
+                "`!cc <choice>` — Make a creation choice (name, gender, race, etc.)\n"
+                "`!deletechar` — Delete your character and start over\n"
+                "`!sheet` — View your full character sheet\n"
+                "`!sheet @player` — View another player's sheet"
+            ),
+        },
+        "gameplay": {
+            "title": "Gameplay",
+            "description": "RP actions are **queued** until all players act or `!pass`, then the DM responds to everyone at once.",
+            "commands": (
+                "`!action <desc>` — Describe what you do *(queued)*\n"
+                "`!ic <dialogue>` — Speak in character *(queued)*\n"
+                "`!emote <action>` — Describe expressions/actions *(queued)*\n"
+                "`!look` — Ask the DM to describe the scene *(queued)*\n"
+                "`!inspect <target>` — Examine something closely *(queued)*\n"
+                "`!talk <NPC>` — Speak to an NPC *(queued)*\n"
+                "`!pass` — Do nothing this round\n"
+                "`!pending` — See who hasn't acted yet\n"
+                "`!resolve` — *(DM)* Force the round to resolve now\n"
+                "`!ask <question>` — Ask the DM a rules question *(no story impact)*\n"
+                "`!ooc <message>` — Out-of-character chat *(not queued)*"
+            ),
+        },
+        "dice": {
+            "title": "Dice & Rolls",
+            "description": "Roll dice and make checks using your character's stats.",
+            "commands": (
+                "`!roll <notation>` — Roll dice (d20, 2d6+3, 4d6, etc.)\n"
+                "`!check <skill/ability>` — Ability or skill check\n"
+                "`!save <ability>` — Saving throw (STR, DEX, CON, INT, WIS, CHA)\n"
+                "`!attack` — Attack roll (d20 + mod + proficiency)"
+            ),
+        },
+        "combat": {
+            "title": "Combat",
+            "description": "Initiative tracking and turn order management.",
+            "commands": (
+                "`!combatstart` — *(DM)* Begin a combat encounter\n"
+                "`!initiative` — Roll initiative (d20 + DEX mod)\n"
+                "`!addnpc <name> <init>` — *(DM)* Add NPC to initiative\n"
+                "`!removenpc <name>` — *(DM)* Remove NPC from initiative\n"
+                "`!begincombat` — *(DM)* Sort initiative and start turns\n"
+                "`!turnorder` — Display the current initiative order\n"
+                "`!next` — *(DM)* Advance to the next turn\n"
+                "`!pass` — Skip your combat turn\n"
+                "`!combatend` — *(DM)* End combat"
+            ),
+        },
+        "progression": {
+            "title": "Progression & Resources",
+            "description": "Rest, level up, and manage HP/XP.",
+            "commands": (
+                "`!rest short` — Short rest (spend hit dice to heal)\n"
+                "`!rest long` — Long rest (full HP, restore hit dice)\n"
+                "`!hp` — View your current HP\n"
+                "`!hp +5` / `!hp -3` — Heal or take damage\n"
+                "`!xp <amount>` — *(DM)* Award XP to all players\n"
+                "`!xp <amount> @player` — *(DM)* Award XP to one player\n"
+                "`!levelup` — Level up (if you have enough XP)\n"
+                "`!inspiration @player` — *(DM)* Grant inspiration\n"
+                "`!deathsave` — Roll a death saving throw"
+            ),
+        },
+        "utility": {
+            "title": "Utility",
+            "description": "Recaps, tracking, and private messages.",
+            "commands": (
+                "`!recap` — AI-narrated recap of recent events\n"
+                "`!status` — Campaign and party status at a glance\n"
+                "`!clues` — View investigation clues\n"
+                "`!clues add <text>` — Add a clue\n"
+                "`!clues remove <#>` — Remove a clue\n"
+                "`!npcs` — View known NPCs\n"
+                "`!npcs add <name> | <desc>` — Add an NPC\n"
+                "`!npcs remove <#>` — Remove an NPC\n"
+                "`!whisper <msg>` — Private message to the DM\n"
+                "`!commands` — This help menu"
+            ),
+        },
+    }
+
+    # Aliases so users can type partial names
+    CATEGORY_ALIASES = {
+        "camp": "campaign", "campaigns": "campaign",
+        "char": "character", "characters": "character", "sheet": "character",
+        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay",
+        "roll": "dice", "rolls": "dice", "rolling": "dice",
+        "fight": "combat", "initiative": "combat", "battle": "combat",
+        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression",
+        "util": "utility", "utils": "utility", "misc": "utility",
+    }
+
     @commands.command(name="commands")
-    async def command_list(self, ctx: commands.Context):
-        """Show all available commands grouped by category."""
-        help_text = """**D&D 5e Discord Bot — Command Reference**
+    async def command_list(self, ctx: commands.Context, *, category: str = ""):
+        """Show available commands. Use !commands <category> for details.
 
-**Campaign Management**
-`!newcampaign [name]` — Create a new campaign (you become DM)
-`!pitch <title> | <desc>` — Propose a campaign concept
-`!pitches` — View all pitches
-`!vote <#>` — Vote for a pitch
-`!selectpitch <#>` — DM selects a pitch
-`!startcampaign` — DM begins the adventure
-`!endcampaign` — DM ends the campaign
-`!campaigninfo` — View campaign status
+        Usage: !commands
+        Usage: !commands combat
+        Usage: !commands dice
+        """
+        category = category.strip().lower()
 
-**Character**
-`!createchar` — Start character creation
-`!cc <choice>` — Make creation choices
-`!deletechar` — Delete your character
-`!sheet` — View your character sheet
+        if not category:
+            # Show the overview menu
+            lines = [
+                "**D&D 5e Bot — Command Categories**",
+                "Type `!commands <category>` for details.\n",
+            ]
+            for key, cat in self.HELP_CATEGORIES.items():
+                lines.append(f"> **{cat['title']}** — `!commands {key}`")
+            lines.append("\n*Example:* `!commands gameplay`, `!commands combat`, `!commands dice`")
+            await ctx.send("\n".join(lines))
+            return
 
-**Gameplay** (actions are queued until all players act or pass)
-`!action <desc>` — Do something (queued)
-`!ic <dialogue>` — Speak in character (queued)
-`!emote <action>` — Describe actions (queued)
-`!look` — Describe the scene (queued)
-`!inspect <target>` — Examine something (queued)
-`!talk <NPC>` — Talk to an NPC (queued)
-`!pass` — Do nothing this round
-`!pending` — See who hasn't acted yet
-`!resolve` — DM forces round to resolve now
-`!ask <question>` — Ask DM a rules question (no story impact)
-`!ooc <message>` — Out-of-character chat (not queued)
+        # Resolve alias
+        resolved = self.CATEGORY_ALIASES.get(category, category)
 
-**Dice**
-`!roll <notation>` — Roll dice (d20, 2d6+3, etc.)
-`!check <skill/ability>` — Ability/skill check
-`!save <ability>` — Saving throw
-`!attack` — Attack roll
+        if resolved not in self.HELP_CATEGORIES:
+            valid = ", ".join(f"`{k}`" for k in self.HELP_CATEGORIES)
+            await ctx.send(f"Unknown category: `{category}`\nAvailable: {valid}")
+            return
 
-**Combat**
-`!combatstart` — DM starts combat
-`!initiative` — Roll initiative
-`!addnpc <name> <init>` — DM adds NPC
-`!begincombat` — DM starts turn order
-`!turnorder` — Show initiative
-`!next` — DM advances turn
-`!combatend` — DM ends combat
-
-**Progression**
-`!rest short/long` — Take a rest
-`!hp [+/-amount]` — View/adjust HP
-`!xp <amount>` — DM awards XP
-`!levelup` — Level up
-`!inspiration @player` — DM grants inspiration
-`!deathsave` — Roll death save
-
-**Utility**
-`!recap` — AI recap of events
-`!status` — Party status
-`!clues [add/remove]` — Track clues
-`!npcs [add/remove]` — Track NPCs
-`!whisper <msg>` — Private DM message
-`!commands` — This help message"""
-
-        # Split for Discord limit
-        parts = help_text.split("\n\n")
-        msg = ""
-        for part in parts:
-            if len(msg) + len(part) + 2 > 1990:
-                await ctx.send(msg)
-                msg = ""
-            msg += part + "\n\n"
-        if msg:
-            await ctx.send(msg)
+        cat = self.HELP_CATEGORIES[resolved]
+        await ctx.send(
+            f"**{cat['title']}**\n"
+            f"*{cat['description']}*\n\n"
+            f"{cat['commands']}"
+        )
 
 
 async def setup(bot: commands.Bot):
