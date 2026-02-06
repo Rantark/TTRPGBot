@@ -67,6 +67,9 @@ class Campaign:
         self.known_npcs: list[dict] = []  # [{"name": str, "description": str}]
         self.clues: list[str] = []
         self.session_log: list[str] = []  # Brief event log for recaps
+        # RP scene coordination: queue actions until all players act or pass
+        self.pending_actions: dict[str, str] = {}  # player_id -> action text
+        self.passed_players: list[str] = []  # player_ids who passed this round
 
     def get_character(self, player_id: str) -> Character | None:
         return self.characters.get(player_id)
@@ -98,6 +101,27 @@ class Campaign:
         if len(self.session_log) > 200:
             self.session_log = self.session_log[-200:]
 
+    def get_active_player_ids(self) -> list[str]:
+        """Return player IDs of characters that are complete (active players)."""
+        return [pid for pid, c in self.characters.items() if c.creation_complete]
+
+    def all_players_acted(self) -> bool:
+        """Check if every active player has submitted an action or passed."""
+        active = set(self.get_active_player_ids())
+        acted = set(self.pending_actions.keys()) | set(self.passed_players)
+        return active.issubset(acted)
+
+    def get_waiting_player_ids(self) -> list[str]:
+        """Return player IDs who haven't acted or passed yet."""
+        active = set(self.get_active_player_ids())
+        acted = set(self.pending_actions.keys()) | set(self.passed_players)
+        return [pid for pid in active if pid not in acted]
+
+    def clear_pending(self):
+        """Clear all pending actions and passes for the next round."""
+        self.pending_actions = {}
+        self.passed_players = []
+
     def to_dict(self) -> dict:
         return {
             "channel_id": self.channel_id,
@@ -113,6 +137,8 @@ class Campaign:
             "known_npcs": self.known_npcs,
             "clues": self.clues,
             "session_log": self.session_log,
+            "pending_actions": self.pending_actions,
+            "passed_players": self.passed_players,
         }
 
     @classmethod
@@ -132,4 +158,6 @@ class Campaign:
         c.known_npcs = data.get("known_npcs", [])
         c.clues = data.get("clues", [])
         c.session_log = data.get("session_log", [])
+        c.pending_actions = data.get("pending_actions", {})
+        c.passed_players = data.get("passed_players", [])
         return c

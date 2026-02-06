@@ -13,6 +13,7 @@ class Character:
         self.owner_id = owner_id
         self.owner_name = owner_name
         self.name = ""
+        self.gender = ""
         self.race = ""
         self.subrace = None
         self.char_class = ""
@@ -102,8 +103,9 @@ class Character:
         """Format a full character sheet for display."""
         sep = "─" * 40
         race_display = self.subrace if self.subrace else self.race
+        gender_str = f" ({self.gender})" if self.gender else ""
         lines = [
-            f"**{self.name}** — Level {self.level} {race_display} {self.char_class}",
+            f"**{self.name}**{gender_str} — Level {self.level} {race_display} {self.char_class}",
             f"*Background: {self.background}*",
             sep,
             "**Ability Scores**",
@@ -149,6 +151,7 @@ class Character:
             "owner_id": self.owner_id,
             "owner_name": self.owner_name,
             "name": self.name,
+            "gender": self.gender,
             "race": self.race,
             "subrace": self.subrace,
             "char_class": self.char_class,
@@ -194,5 +197,6 @@ class Character:
     def short_summary(self) -> str:
         """One-line character summary for DM context."""
         race_display = self.subrace if self.subrace else self.race
-        return (f"{self.name} (Level {self.level} {race_display} {self.char_class}, "
+        gender_str = f", {self.gender}" if self.gender else ""
+        return (f"{self.name} (Level {self.level} {race_display} {self.char_class}{gender_str}, "
                 f"HP {self.current_hp}/{self.max_hp}, AC {self.ac})")

@@ -222,14 +222,18 @@ class UtilityCog(commands.Cog, name="Utility"):
 `!deletechar` — Delete your character
 `!sheet` — View your character sheet
 
-**Gameplay**
-`!action <desc>` — Do something (DM responds)
-`!ic <dialogue>` — Speak in character
-`!emote <action>` — Describe actions
-`!ooc <message>` — Out-of-character chat
-`!look` — Describe the scene
-`!inspect <target>` — Examine something
-`!talk <NPC>` — Talk to an NPC
+**Gameplay** (actions are queued until all players act or pass)
+`!action <desc>` — Do something (queued)
+`!ic <dialogue>` — Speak in character (queued)
+`!emote <action>` — Describe actions (queued)
+`!look` — Describe the scene (queued)
+`!inspect <target>` — Examine something (queued)
+`!talk <NPC>` — Talk to an NPC (queued)
+`!pass` — Do nothing this round
+`!pending` — See who hasn't acted yet
+`!resolve` — DM forces round to resolve now
+`!ask <question>` — Ask DM a rules question (no story impact)
+`!ooc <message>` — Out-of-character chat (not queued)
 
 **Dice**
 `!roll <notation>` — Roll dice (d20, 2d6+3, etc.)
@@ -244,7 +248,6 @@ class UtilityCog(commands.Cog, name="Utility"):
 `!begincombat` — DM starts turn order
 `!turnorder` — Show initiative
 `!next` — DM advances turn
-`!pass` — Skip your turn
 `!combatend` — DM ends combat
 
 **Progression**

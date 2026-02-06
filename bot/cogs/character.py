@@ -104,6 +104,8 @@ class CharacterCog(commands.Cog, name="Character"):
 
         if step == "name":
             await self._step_name(ctx, session, char, choice)
+        elif step == "gender":
+            await self._step_gender(ctx, session, char, choice)
         elif step == "race":
             await self._step_race(ctx, session, char, choice)
         elif step == "draconic_ancestry":
@@ -132,14 +134,35 @@ class CharacterCog(commands.Cog, name="Character"):
             await ctx.send("Please provide a name: `!cc <name>`")
             return
         char.name = choice.strip()
+        session["step"] = "gender"
+        _set_session(ctx, session)
+
+        await ctx.send(
+            f"Great, **{char.name}**!\n\n"
+            f"**Step 2: Gender**\n"
+            f"What is your character's gender?\n"
+            f"`1.` Male\n"
+            f"`2.` Female\n"
+            f"`3.` Non-binary\n"
+            f"Or type anything else (e.g., `!cc Agender`)"
+        )
+
+    async def _step_gender(self, ctx, session, char: Character, choice: str):
+        if not choice.strip():
+            await ctx.send("Please pick a gender: `!cc Male`, `!cc Female`, `!cc Non-binary`, or type your own.")
+            return
+
+        presets = {"1": "Male", "2": "Female", "3": "Non-binary"}
+        char.gender = presets.get(choice.strip(), choice.strip())
+
         session["step"] = "race"
         _set_session(ctx, session)
 
         races = get_race_names()
         race_list = _format_numbered_list(races)
         await ctx.send(
-            f"Great, **{char.name}**!\n\n"
-            f"**Step 2: Race**\n"
+            f"Gender: **{char.gender}**\n\n"
+            f"**Step 3: Race**\n"
             f"Choose your race:\n{race_list}\n\n"
             f"Reply with: `!cc <number or name>`"
         )
@@ -256,7 +279,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         await ctx.send(
             f"{msg}\n\n"
-            f"**Step 3: Class**\n"
+            f"**Step 4: Class**\n"
             f"Choose your class:\n{class_display}\n\n"
             f"Reply with: `!cc <number or name>`"
         )
@@ -282,7 +305,7 @@ class CharacterCog(commands.Cog, name="Character"):
         await ctx.send(
             f"**Class: {cls_name}** (d{cls_data['hit_die']})\n"
             f"*{cls_data['description']}*\n\n"
-            f"**Step 4: Ability Scores**\n"
+            f"**Step 5: Ability Scores**\n"
             f"Choose your method:\n"
             f"`1.` **Roll** — 4d6 drop lowest, 6 times\n"
             f"`2.` **Standard Array** — {STANDARD_ARRAY}\n"
@@ -451,7 +474,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         await ctx.send(
             "\n".join(lines) + "\n\n"
-            f"**Step 5: Background**\n"
+            f"**Step 6: Background**\n"
             f"Choose your background:\n{bg_list}\n\n"
             f"Reply with: `!cc <number or name>`"
         )
@@ -496,7 +519,7 @@ class CharacterCog(commands.Cog, name="Character"):
             f"*{bg_data['description']}*\n"
             f"Feature: {bg_data['feature']}\n"
             f"Skills gained: {', '.join(bg_data['skill_proficiencies'])}\n\n"
-            f"**Step 6: Class Skills**\n"
+            f"**Step 7: Class Skills**\n"
             f"Already proficient: {already}\n"
             f"Choose **{num_skills}** from:\n{skill_list}\n\n"
             f"Reply with numbers: `!cc 1 3` or names: `!cc Athletics Perception`"

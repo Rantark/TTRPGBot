@@ -229,12 +229,8 @@ class CombatCog(commands.Cog, name="Combat"):
 
         await ctx.send(f"{order_display}\n{turn_msg}")
 
-    @commands.command(name="pass")
     async def pass_turn(self, ctx: commands.Context):
-        """Skip your turn in combat (only works on your turn).
-
-        Usage: !pass
-        """
+        """Skip your turn in combat (called from gameplay cog's !pass during combat)."""
         campaign = self._get_campaign(ctx)
         if not campaign or not campaign.combat.active:
             await ctx.send("No active combat.")
