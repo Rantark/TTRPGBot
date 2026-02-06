@@ -1,0 +1,647 @@
+"""Character creation and management cog with interactive step-by-step flow."""
+
+import discord
+from discord.ext import commands
+
+from bot.models.character import Character
+from bot.models.campaign import CampaignPhase
+from bot.data.races import get_race_names, resolve_race, DRACONIC_ANCESTRIES, RACES
+from bot.data.classes import get_class_names, get_class_data, CLASSES
+from bot.data.backgrounds import get_background_names, get_background_data
+from bot.data.rules import (
+    ABILITY_NAMES, ABILITY_FULL_NAMES, STANDARD_ARRAY,
+    POINT_BUY_COSTS, POINT_BUY_BUDGET, modifier_str,
+)
+from bot.dice import roll_ability_scores
+from bot.storage import load_campaign, save_campaign
+
+
+# Track creation state per user (channel_id:user_id -> state dict)
+_creation_sessions: dict[str, dict] = {}
+
+
+def _session_key(channel_id, user_id) -> str:
+    return f"{channel_id}:{user_id}"
+
+
+def _get_session(ctx: commands.Context) -> dict | None:
+    return _creation_sessions.get(_session_key(ctx.channel.id, ctx.author.id))
+
+
+def _set_session(ctx: commands.Context, session: dict):
+    _creation_sessions[_session_key(ctx.channel.id, ctx.author.id)] = session
+
+
+def _clear_session(ctx: commands.Context):
+    _creation_sessions.pop(_session_key(ctx.channel.id, ctx.author.id), None)
+
+
+def _format_numbered_list(items: list[str], columns: int = 2) -> str:
+    """Format items as a numbered list in columns."""
+    lines = []
+    for i, item in enumerate(items, 1):
+        lines.append(f"`{i:2d}.` {item}")
+    # Simple single-column for clarity
+    return "\n".join(lines)
+
+
+class CharacterCog(commands.Cog, name="Character"):
+    """Commands for character creation and management."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    def _get_campaign(self, ctx: commands.Context):
+        return load_campaign(str(ctx.channel.id))
+
+    @commands.command(name="createchar")
+    async def create_char(self, ctx: commands.Context):
+        """Start interactive character creation.
+
+        Usage: !createchar
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel. Ask the DM to use `!newcampaign` first.")
+            return
+        if campaign.phase not in (CampaignPhase.SETUP, CampaignPhase.ACTIVE):
+            await ctx.send("Campaign isn't in setup or active phase yet.")
+            return
+
+        player_id = str(ctx.author.id)
+        existing = campaign.get_character(player_id)
+        if existing and existing.creation_complete:
+            await ctx.send(f"You already have a character: **{existing.name}**. "
+                           "Use `!deletechar` to delete it first.")
+            return
+
+        # Start creation session
+        char = Character(player_id, ctx.author.display_name)
+        session = {"step": "name", "char": char}
+        _set_session(ctx, session)
+
+        await ctx.send(
+            "**Character Creation**\n"
+            "Let's build your character step by step.\n\n"
+            "**Step 1: Name**\n"
+            "What is your character's name?\n"
+            "Reply with: `!cc <name>`"
+        )
+
+    @commands.command(name="cc")
+    async def creation_choice(self, ctx: commands.Context, *, choice: str = ""):
+        """Make a choice during character creation.
+
+        Usage: !cc <your choice>
+        """
+        session = _get_session(ctx)
+        if not session:
+            await ctx.send("No character creation in progress. Use `!createchar` to start.")
+            return
+
+        step = session["step"]
+        char: Character = session["char"]
+
+        if step == "name":
+            await self._step_name(ctx, session, char, choice)
+        elif step == "race":
+            await self._step_race(ctx, session, char, choice)
+        elif step == "draconic_ancestry":
+            await self._step_draconic_ancestry(ctx, session, char, choice)
+        elif step == "half_elf_bonus":
+            await self._step_half_elf_bonus(ctx, session, char, choice)
+        elif step == "class":
+            await self._step_class(ctx, session, char, choice)
+        elif step == "ability_method":
+            await self._step_ability_method(ctx, session, char, choice)
+        elif step == "ability_assign":
+            await self._step_ability_assign(ctx, session, char, choice)
+        elif step == "point_buy":
+            await self._step_point_buy(ctx, session, char, choice)
+        elif step == "background":
+            await self._step_background(ctx, session, char, choice)
+        elif step == "skills":
+            await self._step_skills(ctx, session, char, choice)
+        elif step == "confirm":
+            await self._step_confirm(ctx, session, char, choice)
+        else:
+            await ctx.send("Unknown creation step. Use `!deletechar` and start over with `!createchar`.")
+
+    async def _step_name(self, ctx, session, char: Character, choice: str):
+        if not choice.strip():
+            await ctx.send("Please provide a name: `!cc <name>`")
+            return
+        char.name = choice.strip()
+        session["step"] = "race"
+        _set_session(ctx, session)
+
+        races = get_race_names()
+        race_list = _format_numbered_list(races)
+        await ctx.send(
+            f"Great, **{char.name}**!\n\n"
+            f"**Step 2: Race**\n"
+            f"Choose your race:\n{race_list}\n\n"
+            f"Reply with: `!cc <number or name>`"
+        )
+
+    async def _step_race(self, ctx, session, char: Character, choice: str):
+        races = get_race_names()
+        selected = self._resolve_choice(choice, races)
+        if not selected:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(races)}) or type the race name.")
+            return
+
+        race_info = resolve_race(selected)
+        if not race_info:
+            await ctx.send("Could not resolve that race. Try again.")
+            return
+
+        char.race = race_info["race"]
+        char.subrace = race_info["subrace"]
+        char.racial_bonuses = race_info["ability_bonuses"]
+        char.speed = race_info["speed"]
+        char.traits = race_info["traits"]
+        char.languages = race_info["languages"]
+
+        # Dragonborn needs ancestry choice
+        if char.race == "Dragonborn":
+            session["step"] = "draconic_ancestry"
+            _set_session(ctx, session)
+            ancestry_list = _format_numbered_list(list(DRACONIC_ANCESTRIES.keys()))
+            await ctx.send(
+                f"**Dragonborn Ancestry**\n"
+                f"Choose your draconic ancestry:\n{ancestry_list}\n\n"
+                "This determines your breath weapon and damage resistance.\n"
+                "Reply with: `!cc <number or color>`"
+            )
+            return
+
+        # Half-Elf needs two +1 ability choices
+        if char.race == "Half-Elf":
+            session["step"] = "half_elf_bonus"
+            session["half_elf_picks"] = []
+            _set_session(ctx, session)
+            abilities = [a for a in ABILITY_NAMES if a != "CHA"]
+            ab_list = _format_numbered_list(abilities)
+            await ctx.send(
+                f"**Half-Elf Bonus Abilities**\n"
+                f"Choose **2** ability scores to increase by +1 (other than CHA):\n{ab_list}\n\n"
+                "Reply with two numbers or names: `!cc 1 3` or `!cc STR CON`"
+            )
+            return
+
+        await self._show_race_summary_and_advance(ctx, session, char)
+
+    async def _step_draconic_ancestry(self, ctx, session, char: Character, choice: str):
+        ancestries = list(DRACONIC_ANCESTRIES.keys())
+        selected = self._resolve_choice(choice, ancestries)
+        if not selected:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(ancestries)}) or type the color.")
+            return
+
+        ancestry_data = DRACONIC_ANCESTRIES[selected]
+        char.draconic_ancestry = selected
+        char.traits.append(f"Breath Weapon: {ancestry_data['breath']} ({ancestry_data['damage_type']})")
+        char.traits.append(f"Damage Resistance: {ancestry_data['damage_type']}")
+
+        await self._show_race_summary_and_advance(ctx, session, char)
+
+    async def _step_half_elf_bonus(self, ctx, session, char: Character, choice: str):
+        abilities = [a for a in ABILITY_NAMES if a != "CHA"]
+        parts = choice.upper().replace(",", " ").split()
+
+        picks = []
+        for part in parts:
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(abilities):
+                    picks.append(abilities[idx])
+            elif part in abilities:
+                picks.append(part)
+
+        if len(picks) != 2 or len(set(picks)) != 2:
+            await ctx.send("Please choose exactly **2 different** abilities. Example: `!cc 1 3` or `!cc STR CON`")
+            return
+
+        for ab in picks:
+            char.racial_bonuses[ab] = char.racial_bonuses.get(ab, 0) + 1
+        char.half_elf_bonus_abilities = picks
+
+        await self._show_race_summary_and_advance(ctx, session, char)
+
+    async def _show_race_summary_and_advance(self, ctx, session, char: Character):
+        """Show race summary and move to class selection."""
+        race_display = char.subrace or char.race
+        bonuses = ", ".join(f"{a} +{v}" for a, v in char.racial_bonuses.items())
+
+        msg = (
+            f"**Race: {race_display}**\n"
+            f"Ability Bonuses: {bonuses}\n"
+            f"Speed: {char.speed} ft\n"
+            f"Traits: {', '.join(char.traits[:5])}"
+        )
+        if len(char.traits) > 5:
+            msg += f" (+{len(char.traits) - 5} more)"
+
+        session["step"] = "class"
+        _set_session(ctx, session)
+
+        classes = get_class_names()
+        class_list = []
+        for cls_name in classes:
+            data = CLASSES[cls_name]
+            class_list.append(f"{cls_name} — *{data['description'][:60]}*")
+        class_display = _format_numbered_list(class_list)
+
+        await ctx.send(
+            f"{msg}\n\n"
+            f"**Step 3: Class**\n"
+            f"Choose your class:\n{class_display}\n\n"
+            f"Reply with: `!cc <number or name>`"
+        )
+
+    async def _step_class(self, ctx, session, char: Character, choice: str):
+        classes = get_class_names()
+        selected = self._resolve_choice(choice, classes)
+        if not selected:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(classes)}) or type the class name.")
+            return
+
+        cls_name, cls_data = get_class_data(selected)
+        char.char_class = cls_name
+        char.hit_die = cls_data["hit_die"]
+        char.saving_throw_proficiencies = list(cls_data["saving_throws"])
+        char.armor_proficiencies = list(cls_data["armor_proficiencies"])
+        char.weapon_proficiencies = list(cls_data["weapon_proficiencies"])
+
+        session["class_data"] = cls_data
+        session["step"] = "ability_method"
+        _set_session(ctx, session)
+
+        await ctx.send(
+            f"**Class: {cls_name}** (d{cls_data['hit_die']})\n"
+            f"*{cls_data['description']}*\n\n"
+            f"**Step 4: Ability Scores**\n"
+            f"Choose your method:\n"
+            f"`1.` **Roll** — 4d6 drop lowest, 6 times\n"
+            f"`2.` **Standard Array** — {STANDARD_ARRAY}\n"
+            f"`3.` **Point Buy** — 27 points to spend\n\n"
+            f"Reply with: `!cc 1`, `!cc 2`, or `!cc 3`"
+        )
+
+    async def _step_ability_method(self, ctx, session, char: Character, choice: str):
+        choice = choice.strip()
+
+        if choice in ("1", "roll"):
+            # Roll 4d6 drop lowest
+            results = roll_ability_scores()
+            scores = [r[0] for r in results]
+            details = []
+            for total, rolls in results:
+                dropped = min(rolls)
+                detail_rolls = []
+                dropped_shown = False
+                for r in rolls:
+                    if r == dropped and not dropped_shown:
+                        detail_rolls.append(f"~~{r}~~")
+                        dropped_shown = True
+                    else:
+                        detail_rolls.append(str(r))
+                details.append(f"[{', '.join(detail_rolls)}] = **{total}**")
+
+            session["rolled_scores"] = scores
+            session["step"] = "ability_assign"
+            _set_session(ctx, session)
+
+            detail_str = "\n".join(f"  Roll {i+1}: {d}" for i, d in enumerate(details))
+            await ctx.send(
+                f"**Rolled Ability Scores:**\n{detail_str}\n\n"
+                f"Your scores: **{scores}**\n\n"
+                f"Assign them to abilities in order (STR DEX CON INT WIS CHA):\n"
+                f"Reply with: `!cc {' '.join(str(s) for s in scores)}`\n"
+                f"(Rearrange the numbers however you want)"
+            )
+
+        elif choice in ("2", "standard", "array"):
+            session["rolled_scores"] = list(STANDARD_ARRAY)
+            session["step"] = "ability_assign"
+            _set_session(ctx, session)
+
+            await ctx.send(
+                f"**Standard Array:** {STANDARD_ARRAY}\n\n"
+                f"Assign them to abilities in order (STR DEX CON INT WIS CHA):\n"
+                f"Reply with: `!cc 15 14 13 12 10 8`\n"
+                f"(Rearrange the numbers however you want)"
+            )
+
+        elif choice in ("3", "point", "buy", "point buy"):
+            session["point_buy_scores"] = {a: 8 for a in ABILITY_NAMES}
+            session["point_buy_remaining"] = POINT_BUY_BUDGET
+            session["step"] = "point_buy"
+            _set_session(ctx, session)
+
+            await self._show_point_buy(ctx, session)
+
+        else:
+            await ctx.send("Choose `1` (Roll), `2` (Standard Array), or `3` (Point Buy).")
+
+    async def _step_ability_assign(self, ctx, session, char: Character, choice: str):
+        available = sorted(session["rolled_scores"], reverse=True)
+        parts = choice.replace(",", " ").split()
+
+        try:
+            values = [int(p) for p in parts]
+        except ValueError:
+            await ctx.send(f"Enter 6 numbers from your available scores: {available}")
+            return
+
+        if len(values) != 6:
+            await ctx.send(f"Need exactly 6 scores. Your available scores: {available}")
+            return
+
+        if sorted(values) != sorted(available):
+            await ctx.send(f"Those don't match your available scores: {available}")
+            return
+
+        for i, ab in enumerate(ABILITY_NAMES):
+            char.abilities[ab] = values[i]
+
+        # Apply racial bonuses
+        for ab, bonus in char.racial_bonuses.items():
+            char.abilities[ab] += bonus
+
+        await self._show_abilities_and_advance_to_background(ctx, session, char)
+
+    async def _show_point_buy(self, ctx, session):
+        scores = session["point_buy_scores"]
+        remaining = session["point_buy_remaining"]
+
+        lines = ["**Point Buy** — Budget remaining: **{0}**".format(remaining)]
+        for i, ab in enumerate(ABILITY_NAMES, 1):
+            score = scores[ab]
+            mod = modifier_str(score)
+            lines.append(f"  `{i}.` {ABILITY_FULL_NAMES[ab]:14s} {score:2d} ({mod})")
+
+        lines.append("\nTo adjust: `!cc <ability#> <new_score>` (e.g., `!cc 1 15` to set STR to 15)")
+        lines.append("Scores must be 8-15. When happy: `!cc done`")
+        lines.append(f"\nCost table: " + " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items()))
+
+        await ctx.send("\n".join(lines))
+
+    async def _step_point_buy(self, ctx, session, char: Character, choice: str):
+        if choice.strip().lower() == "done":
+            remaining = session["point_buy_remaining"]
+            if remaining < 0:
+                await ctx.send(f"You're over budget by {abs(remaining)} points! Reduce some scores.")
+                return
+
+            for ab in ABILITY_NAMES:
+                char.abilities[ab] = session["point_buy_scores"][ab]
+            # Apply racial bonuses
+            for ab, bonus in char.racial_bonuses.items():
+                char.abilities[ab] += bonus
+            await self._show_abilities_and_advance_to_background(ctx, session, char)
+            return
+
+        parts = choice.replace(",", " ").split()
+        if len(parts) != 2:
+            await ctx.send("Format: `!cc <ability#> <score>` or `!cc done` when finished.")
+            return
+
+        try:
+            ab_idx = int(parts[0]) - 1
+            new_score = int(parts[1])
+        except ValueError:
+            await ctx.send("Format: `!cc <ability#> <score>` (e.g., `!cc 1 15`)")
+            return
+
+        if ab_idx < 0 or ab_idx >= 6:
+            await ctx.send("Ability number must be 1-6.")
+            return
+        if new_score not in POINT_BUY_COSTS:
+            await ctx.send(f"Score must be 8-15. Cost table: " +
+                           " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items()))
+            return
+
+        ab = ABILITY_NAMES[ab_idx]
+        old_score = session["point_buy_scores"][ab]
+        old_cost = POINT_BUY_COSTS[old_score]
+        new_cost = POINT_BUY_COSTS[new_score]
+
+        session["point_buy_remaining"] += old_cost - new_cost
+        session["point_buy_scores"][ab] = new_score
+        _set_session(ctx, session)
+
+        await self._show_point_buy(ctx, session)
+
+    async def _show_abilities_and_advance_to_background(self, ctx, session, char: Character):
+        lines = ["**Final Ability Scores** (racial bonuses applied):"]
+        for ab in ABILITY_NAMES:
+            score = char.abilities[ab]
+            bonus = char.racial_bonuses.get(ab, 0)
+            bonus_str = f" (+{bonus} racial)" if bonus else ""
+            lines.append(f"  {ABILITY_FULL_NAMES[ab]:14s} **{score}** ({modifier_str(score)}){bonus_str}")
+
+        session["step"] = "background"
+        _set_session(ctx, session)
+
+        backgrounds = get_background_names()
+        bg_list = _format_numbered_list(backgrounds)
+
+        await ctx.send(
+            "\n".join(lines) + "\n\n"
+            f"**Step 5: Background**\n"
+            f"Choose your background:\n{bg_list}\n\n"
+            f"Reply with: `!cc <number or name>`"
+        )
+
+    async def _step_background(self, ctx, session, char: Character, choice: str):
+        backgrounds = get_background_names()
+        selected = self._resolve_choice(choice, backgrounds)
+        if not selected:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(backgrounds)}) or type the background name.")
+            return
+
+        bg_name, bg_data = get_background_data(selected)
+        char.background = bg_name
+
+        # Add background skill proficiencies
+        for skill in bg_data["skill_proficiencies"]:
+            if skill not in char.skill_proficiencies:
+                char.skill_proficiencies.append(skill)
+
+        # Add tool proficiencies
+        for tool in bg_data.get("tool_proficiencies", []):
+            char.tool_proficiencies.append(tool)
+
+        char.features.append(bg_data["feature"])
+
+        # Now choose class skills
+        cls_data = session["class_data"]
+        # Filter out skills already granted by background
+        available_skills = [s for s in cls_data["skill_choices"] if s not in char.skill_proficiencies]
+        num_skills = cls_data["num_skills"]
+
+        session["available_skills"] = available_skills
+        session["num_skills"] = num_skills
+        session["step"] = "skills"
+        _set_session(ctx, session)
+
+        skill_list = _format_numbered_list(available_skills)
+        already = ", ".join(char.skill_proficiencies) if char.skill_proficiencies else "None"
+
+        await ctx.send(
+            f"**Background: {bg_name}**\n"
+            f"*{bg_data['description']}*\n"
+            f"Feature: {bg_data['feature']}\n"
+            f"Skills gained: {', '.join(bg_data['skill_proficiencies'])}\n\n"
+            f"**Step 6: Class Skills**\n"
+            f"Already proficient: {already}\n"
+            f"Choose **{num_skills}** from:\n{skill_list}\n\n"
+            f"Reply with numbers: `!cc 1 3` or names: `!cc Athletics Perception`"
+        )
+
+    async def _step_skills(self, ctx, session, char: Character, choice: str):
+        available = session["available_skills"]
+        num_needed = session["num_skills"]
+        parts = choice.replace(",", " ").split()
+
+        picks = []
+        for part in parts:
+            part = part.strip()
+            resolved = self._resolve_choice(part, available)
+            if resolved:
+                picks.append(resolved)
+
+        # Deduplicate
+        picks = list(dict.fromkeys(picks))
+
+        if len(picks) != num_needed:
+            await ctx.send(f"Choose exactly **{num_needed}** skills. Try again.")
+            return
+
+        for skill in picks:
+            if skill not in char.skill_proficiencies:
+                char.skill_proficiencies.append(skill)
+
+        # Finalize character
+        char.finalize()
+
+        session["step"] = "confirm"
+        _set_session(ctx, session)
+
+        sheet = char.format_sheet()
+        # Truncate if needed for preview
+        if len(sheet) > 1800:
+            sheet = sheet[:1800] + "\n..."
+
+        await ctx.send(
+            f"**Character Preview:**\n{sheet}\n\n"
+            f"Confirm this character? Reply `!cc yes` to save or `!cc no` to start over."
+        )
+
+    async def _step_confirm(self, ctx, session, char: Character, choice: str):
+        choice = choice.strip().lower()
+        if choice in ("yes", "y", "confirm"):
+            campaign = self._get_campaign(ctx)
+            if not campaign:
+                await ctx.send("Campaign not found. Something went wrong.")
+                _clear_session(ctx)
+                return
+
+            campaign.add_character(str(ctx.author.id), char)
+            save_campaign(campaign)
+            _clear_session(ctx)
+
+            await ctx.send(
+                f"**{char.name}** has been created and saved!\n"
+                f"Use `!sheet` to view your character sheet anytime."
+            )
+        elif choice in ("no", "n", "restart"):
+            _clear_session(ctx)
+            await ctx.send("Character creation cancelled. Use `!createchar` to start over.")
+        else:
+            await ctx.send("Reply `!cc yes` to confirm or `!cc no` to start over.")
+
+    @commands.command(name="deletechar")
+    async def delete_char(self, ctx: commands.Context):
+        """Delete your character and start over."""
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        player_id = str(ctx.author.id)
+        char = campaign.get_character(player_id)
+        _clear_session(ctx)
+
+        if not char:
+            await ctx.send("You don't have a character to delete.")
+            return
+
+        name = char.name or "Unnamed"
+        campaign.remove_character(player_id)
+        save_campaign(campaign)
+        await ctx.send(f"**{name}** has been deleted. Use `!createchar` to make a new character.")
+
+    @commands.command(name="sheet")
+    async def sheet(self, ctx: commands.Context, member: discord.Member = None):
+        """View your character sheet (or another player's).
+
+        Usage: !sheet
+        Usage: !sheet @player
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        target_id = str(member.id) if member else str(ctx.author.id)
+        char = campaign.get_character(target_id)
+        if not char:
+            await ctx.send("No character found." if member else
+                           "You don't have a character. Use `!createchar` to make one.")
+            return
+
+        sheet = char.format_sheet()
+        # Split if too long
+        while len(sheet) > 1990:
+            split_at = sheet.rfind("\n", 0, 1990)
+            if split_at == -1:
+                split_at = 1990
+            await ctx.send(sheet[:split_at])
+            sheet = sheet[split_at:].lstrip("\n")
+        if sheet:
+            await ctx.send(sheet)
+
+    def _resolve_choice(self, choice: str, options: list[str]) -> str | None:
+        """Resolve a user choice by number or partial name match."""
+        choice = choice.strip()
+
+        # Try as number
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(options):
+                return options[idx]
+            return None
+
+        # Try exact match (case-insensitive)
+        choice_lower = choice.lower()
+        for opt in options:
+            # Handle formatted options like "Fighter — A master..."
+            opt_name = opt.split("—")[0].strip() if "—" in opt else opt
+            if opt_name.lower() == choice_lower:
+                return opt_name if "—" in opt else opt
+
+        # Try prefix match
+        for opt in options:
+            opt_name = opt.split("—")[0].strip() if "—" in opt else opt
+            if opt_name.lower().startswith(choice_lower):
+                return opt_name if "—" in opt else opt
+
+        return None
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(CharacterCog(bot))
