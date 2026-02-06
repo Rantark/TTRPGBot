@@ -1,4 +1,14 @@
-"""Claude AI Dungeon Master engine using Anthropic API."""
+"""Claude AI Dungeon Master engine using Anthropic API with prompt caching.
+
+Prompt caching drastically reduces API costs by letting Anthropic cache
+and reuse parts of the prompt that don't change between requests:
+  - The static DM system instructions (never changes)
+  - Campaign context like party/NPC info (changes slowly)
+  - Conversation history (previous messages are stable, only new ones added)
+
+Cached input tokens cost 90% less than uncached tokens, so a typical
+session with lots of back-and-forth will see major savings.
+"""
 
 import os
 import logging
@@ -9,7 +19,8 @@ from bot.models.campaign import Campaign
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are an expert Dungeon Master for a D&D 5th Edition campaign being played over Discord.
+# Static DM instructions — this NEVER changes and is the prime caching target.
+SYSTEM_PROMPT_STATIC = """You are an expert Dungeon Master for a D&D 5th Edition campaign being played over Discord.
 
 YOUR ROLE:
 - You are the DM. You narrate the story, roleplay all NPCs, describe environments, manage encounters, and adjudicate rules.
@@ -44,20 +55,85 @@ WHAT NOT TO DO:
 - Never ignore player input — acknowledge and respond to everything.
 - Never give away puzzle solutions or secrets unless earned through play."""
 
+# Cache control marker — tells Anthropic to cache everything up to this point.
+CACHE_BREAKPOINT = {"type": "ephemeral"}
 
-def build_dm_context(campaign: Campaign, player_action: str, player_name: str,
-                     character_summary: str = "", extra_context: str = "") -> list[dict]:
-    """Build the messages list for a Claude API call.
 
-    Incorporates campaign history and current player action.
+def _build_system_blocks(campaign: Campaign, extra_system: str = "") -> list[dict]:
+    """Build the system prompt as a list of content blocks with cache breakpoints.
+
+    Block 1: Static DM instructions (cached — never changes)
+    Block 2: Campaign context (cached — changes slowly between rounds)
+    """
+    blocks = []
+
+    # Block 1: Static instructions — this is identical every single call,
+    # so caching it saves the most tokens over a session.
+    blocks.append({
+        "type": "text",
+        "text": SYSTEM_PROMPT_STATIC,
+        "cache_control": CACHE_BREAKPOINT,
+    })
+
+    # Block 2: Dynamic campaign context — party info, NPCs, combat state.
+    # Changes between rounds but is the same for all players within a round.
+    context = ""
+    context += f"CAMPAIGN: {campaign.name}\n"
+    if campaign.description:
+        context += f"CAMPAIGN DESCRIPTION: {campaign.description}\n"
+    context += f"\nPARTY:\n{campaign.get_party_summary()}\n"
+
+    if campaign.known_npcs:
+        context += "\nKNOWN NPCs:\n"
+        for npc in campaign.known_npcs:
+            context += f"- {npc['name']}: {npc['description']}\n"
+
+    if campaign.combat.active:
+        context += "\nCOMBAT IS ACTIVE"
+        context += f" — Round {campaign.combat.round_number}"
+        if campaign.combat.current_turn:
+            context += f", Current turn: {campaign.combat.current_turn['name']}"
+        context += "\nInitiative Order:\n"
+        for i, entry in enumerate(campaign.combat.initiative_order):
+            marker = " ⟵" if i == campaign.combat.current_turn_index else ""
+            context += f"  {entry['name']}: {entry['roll']}{marker}\n"
+
+    if extra_system:
+        context += f"\n{extra_system}"
+
+    blocks.append({
+        "type": "text",
+        "text": context,
+        "cache_control": CACHE_BREAKPOINT,
+    })
+
+    return blocks
+
+
+def _build_messages(campaign: Campaign, player_action: str, player_name: str,
+                    character_summary: str = "", extra_context: str = "") -> list[dict]:
+    """Build the messages list with a cache breakpoint on conversation history.
+
+    The conversation history grows each turn but earlier messages are stable,
+    so we place a cache breakpoint on the last history message. This means
+    on the next call, all prior history is served from cache.
     """
     messages = []
 
-    # Include relevant conversation history
-    for msg in campaign.message_history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
+    history = campaign.message_history
+    for i, msg in enumerate(history):
+        entry = {"role": msg["role"]}
+        # Place a cache breakpoint on the LAST history message so the
+        # entire conversation history prefix gets cached for the next call.
+        if i == len(history) - 1:
+            entry["content"] = [
+                {"type": "text", "text": msg["content"], "cache_control": CACHE_BREAKPOINT}
+            ]
+        else:
+            entry["content"] = msg["content"]
+        messages.append(entry)
 
-    # Build the current user message with context
+    # Build the new user message (never cached — it's unique each time)
     user_content = ""
     if character_summary:
         user_content += f"[Player: {player_name} — {character_summary}]\n"
@@ -75,7 +151,7 @@ def build_dm_context(campaign: Campaign, player_action: str, player_name: str,
 
 
 class DMEngine:
-    """Manages Claude API calls for the DM."""
+    """Manages Claude API calls for the DM with prompt caching enabled."""
 
     def __init__(self):
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -89,37 +165,16 @@ class DMEngine:
                               extra_context: str = "") -> str:
         """Get a DM response from Claude for a player action.
 
-        Returns the response text, and updates campaign history.
+        Uses prompt caching on system prompt and conversation history
+        to minimize token costs across a session.
         """
-        # Build system prompt with campaign context
-        system = SYSTEM_PROMPT + "\n\n"
-        system += f"CAMPAIGN: {campaign.name}\n"
-        if campaign.description:
-            system += f"CAMPAIGN DESCRIPTION: {campaign.description}\n"
-        system += f"\nPARTY:\n{campaign.get_party_summary()}\n"
-
-        if campaign.known_npcs:
-            system += "\nKNOWN NPCs:\n"
-            for npc in campaign.known_npcs:
-                system += f"- {npc['name']}: {npc['description']}\n"
-
-        if campaign.combat.active:
-            system += "\nCOMBAT IS ACTIVE"
-            system += f" — Round {campaign.combat.round_number}"
-            if campaign.combat.current_turn:
-                system += f", Current turn: {campaign.combat.current_turn['name']}"
-            system += "\nInitiative Order:\n"
-            for i, entry in enumerate(campaign.combat.initiative_order):
-                marker = " ⟵" if i == campaign.combat.current_turn_index else ""
-                system += f"  {entry['name']}: {entry['roll']}{marker}\n"
-
-        messages = build_dm_context(
+        system = _build_system_blocks(campaign)
+        messages = _build_messages(
             campaign, player_action, player_name,
             character_summary, extra_context,
         )
 
         try:
-            # Use synchronous client in thread to avoid blocking
             import asyncio
             response = await asyncio.to_thread(
                 self.client.messages.create,
@@ -130,6 +185,18 @@ class DMEngine:
             )
 
             reply = response.content[0].text
+
+            # Log cache performance
+            usage = response.usage
+            cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            total_input = getattr(usage, "input_tokens", 0) or 0
+            if cache_read or cache_create:
+                logger.info(
+                    f"Cache stats — read: {cache_read}, created: {cache_create}, "
+                    f"uncached: {total_input - cache_read - cache_create}, "
+                    f"output: {usage.output_tokens}"
+                )
 
             # Update campaign history
             user_msg = messages[-1]["content"]
@@ -147,8 +214,13 @@ class DMEngine:
 
     async def get_recap(self, campaign: Campaign) -> str:
         """Generate a recap of recent events."""
-        system = SYSTEM_PROMPT + "\n\nGenerate a brief, dramatic recap of recent events in this campaign."
-        system += f"\nCAMPAIGN: {campaign.name}"
+        system = [
+            {"type": "text", "text": SYSTEM_PROMPT_STATIC, "cache_control": CACHE_BREAKPOINT},
+            {"type": "text", "text": (
+                "Generate a brief, dramatic recap of recent events in this campaign.\n"
+                f"CAMPAIGN: {campaign.name}"
+            )},
+        ]
 
         log_text = "\n".join(campaign.session_log[-30:]) if campaign.session_log else "No events logged yet."
         messages = [{"role": "user", "content": f"Please give a recap of recent events:\n{log_text}"}]
@@ -169,10 +241,10 @@ class DMEngine:
 
     async def narrate_start(self, campaign: Campaign) -> str:
         """Generate the opening narration for a campaign."""
-        system = SYSTEM_PROMPT
-        system += f"\n\nCAMPAIGN: {campaign.name}"
-        system += f"\nDESCRIPTION: {campaign.description}"
-        system += f"\nPARTY:\n{campaign.get_party_summary()}"
+        system = _build_system_blocks(
+            campaign,
+            extra_system=f"DESCRIPTION: {campaign.description}",
+        )
 
         messages = [{
             "role": "user",
