@@ -12,6 +12,7 @@ from discord.ext import commands
 from bot.models.campaign import CampaignPhase
 from bot.data.rules import ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS, modifier_str
 from bot.dice import parse_and_roll, roll_check
+from bot.dm_engine import parse_action_tags, extract_whispers
 from bot.storage import load_campaign, save_campaign
 
 
@@ -90,7 +91,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
         # Send to Claude
         async with ctx.typing():
-            response = await self.bot.dm_engine.get_dm_response(
+            raw_response = await self.bot.dm_engine.get_dm_response(
                 campaign,
                 f"[ROUND OF ACTIONS — All players have acted simultaneously]\n{combined}",
                 "Party",
@@ -101,9 +102,12 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             )
 
         campaign.add_session_log(f"Round resolved: {combined[:120]}")
+
+        # Process action tags (damage, conditions, whispers, etc.)
+        clean_response = await self._process_dm_response(ctx, campaign, raw_response)
         save_campaign(campaign)
 
-        await self._send_long(ctx, response)
+        await self._send_long(ctx, clean_response)
         await ctx.send("*A new round begins.* Submit your actions!")
 
     async def _dm_respond_immediate(self, ctx, campaign, action_text: str):
@@ -113,15 +117,45 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         char_summary = char.short_summary() if char else ""
 
         async with ctx.typing():
-            response = await self.bot.dm_engine.get_dm_response(
+            raw_response = await self.bot.dm_engine.get_dm_response(
                 campaign, action_text, ctx.author.display_name,
                 char_summary,
             )
 
         campaign.add_session_log(f"{ctx.author.display_name}: {action_text[:80]}")
+
+        # Process action tags (damage, conditions, whispers, etc.)
+        clean_response = await self._process_dm_response(ctx, campaign, raw_response)
         save_campaign(campaign)
 
-        await self._send_long(ctx, response)
+        await self._send_long(ctx, clean_response)
+
+    async def _process_dm_response(self, ctx, campaign, raw_response: str) -> str:
+        """Parse action tags, execute game state changes, send whispers, return clean text."""
+        # Parse and execute action tags (DAMAGE, CONDITION, NPC_DEFEAT, SPELL_SLOT)
+        clean_text, log_entries = parse_action_tags(raw_response, campaign)
+
+        # Extract and send whispers
+        clean_text, whispers = extract_whispers(clean_text)
+        for char_name, secret_msg in whispers:
+            player_id = campaign.get_player_id_by_char_name(char_name)
+            if player_id:
+                try:
+                    member = ctx.guild.get_member(int(player_id))
+                    if member:
+                        await member.send(f"**DM whispers to {char_name}:**\n{secret_msg}")
+                except (discord.Forbidden, Exception):
+                    pass  # DMs disabled or member not found
+
+        # Log state changes
+        for entry in log_entries:
+            campaign.add_session_log(entry)
+
+        # Save if anything changed
+        if log_entries or whispers:
+            save_campaign(campaign)
+
+        return clean_text
 
     async def _send_long(self, ctx, text: str):
         """Send a message, splitting if it exceeds Discord's limit."""
@@ -318,6 +352,61 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             lines.append(f"\nWaiting on {len(waiting)} player(s). DM can use `!resolve` to force it.")
 
         await ctx.send("\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # DM-initiated commands
+    # ------------------------------------------------------------------
+
+    @commands.command(name="dm")
+    async def dm_narrate(self, ctx: commands.Context, *, prompt: str):
+        """DM-only: Prompt Claude to narrate a scene or event without player action.
+
+        Usage: !dm A dragon lands in front of the party
+        Usage: !dm Time passes — it is now nightfall
+        Usage: !dm The merchant approaches the party with a worried look
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+        if campaign.dm_id != str(ctx.author.id):
+            await ctx.send("Only the DM can use `!dm`.")
+            return
+
+        async with ctx.typing():
+            raw_response = await self.bot.dm_engine.get_dm_narration(campaign, prompt)
+
+        campaign.add_session_log(f"DM directive: {prompt[:80]}")
+
+        # Process action tags
+        clean_response = await self._process_dm_response(ctx, campaign, raw_response)
+        save_campaign(campaign)
+
+        await self._send_long(ctx, clean_response)
+
+    @commands.command(name="dm-whisper", aliases=["dmw", "secret"])
+    async def dm_whisper(self, ctx: commands.Context, target: discord.Member, *, message: str):
+        """DM-only: Send a private message to a specific player via Discord DM.
+
+        Usage: !dm-whisper @Player Your passive Perception notices a hidden door
+        Usage: !dmw @Player You recognize the symbol on the wall
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+        if campaign.dm_id != str(ctx.author.id):
+            await ctx.send("Only the DM can send whispers.")
+            return
+
+        char = campaign.get_character(str(target.id))
+        char_name = char.name if char else target.display_name
+
+        try:
+            await target.send(f"**DM whispers to {char_name}:**\n{message}")
+            await ctx.message.add_reaction("\u2709\ufe0f")  # ✉️ envelope
+        except discord.Forbidden:
+            await ctx.send(f"Cannot send DM to {target.display_name} — they may have DMs disabled.")
 
     # ------------------------------------------------------------------
     # Non-queued commands (these don't advance story / are immediate)

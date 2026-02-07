@@ -68,7 +68,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 else:
                     condition = "DOWN"
                 insp = " | Inspiration" if char.inspiration else ""
-                lines.append(f"  **{char.name}** — HP {char.current_hp}/{char.max_hp} ({condition}) | AC {char.ac}{insp}")
+                conds = f" | {', '.join(char.conditions)}" if char.conditions else ""
+                lines.append(f"  **{char.name}** — HP {char.current_hp}/{char.max_hp} ({condition}) | AC {char.ac}{insp}{conds}")
 
         await ctx.send("\n".join(lines))
 
@@ -245,6 +246,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!pass` — Do nothing this round\n"
                 "`!pending` — See who hasn't acted yet\n"
                 "`!resolve` — *(DM)* Force the round to resolve now\n"
+                "`!dm <prompt>` — *(DM)* Narrate a scene or event\n"
+                "`!dm-whisper @player <msg>` — *(DM)* Private message to a player\n"
                 "`!ask <question>` — Ask the DM a rules question *(no story impact)*\n"
                 "`!ooc <message>` — Out-of-character chat *(not queued)*"
             ),
@@ -334,7 +337,7 @@ class UtilityCog(commands.Cog, name="Utility"):
     CATEGORY_ALIASES = {
         "camp": "campaign", "campaigns": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character",
-        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay",
+        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",

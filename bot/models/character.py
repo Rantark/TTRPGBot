@@ -306,3 +306,61 @@ class Character:
         if self.known_spells:
             lines.append(f"  Known Spells: {', '.join(self.known_spells)}")
         return "\n".join(lines)
+
+    def dm_stat_block(self) -> str:
+        """Detailed stat block for DM context — gives Claude full visibility."""
+        if not self.creation_complete:
+            return f"- {self.owner_name} — *Creating character...*"
+
+        race_display = self.subrace if self.subrace else self.race
+        gender_str = f", {self.gender}" if self.gender else ""
+
+        lines = [f"- {self.name} ({race_display} {self.char_class} {self.level}{gender_str})"]
+        lines.append(f"  HP: {self.current_hp}/{self.max_hp} | AC: {self.ac} | Prof: +{self.proficiency_bonus}")
+
+        # Ability modifiers
+        ab_strs = []
+        for ab in ABILITY_NAMES:
+            ab_strs.append(f"{ab} {modifier_str(self.abilities[ab])}")
+        lines.append(f"  {', '.join(ab_strs)}")
+
+        # Key skill modifiers
+        key_skills = ["Perception", "Investigation", "Stealth", "Insight", "Athletics", "Arcana"]
+        skill_strs = []
+        for sk in key_skills:
+            mod = self.get_skill_modifier(sk)
+            prof = "★" if sk in self.skill_proficiencies else ""
+            mod_s = f"+{mod}" if mod >= 0 else str(mod)
+            skill_strs.append(f"{sk} {mod_s}{prof}")
+        lines.append(f"  {', '.join(skill_strs)}")
+
+        # Passive scores
+        passive_perc = 10 + self.get_skill_modifier("Perception")
+        passive_inv = 10 + self.get_skill_modifier("Investigation")
+        lines.append(f"  Passive Perception: {passive_perc}, Passive Investigation: {passive_inv}")
+
+        # Conditions
+        if self.conditions:
+            lines.append(f"  Conditions: {', '.join(self.conditions)}")
+
+        # Spellcasting summary
+        if self.spellcasting_ability:
+            spell_mod = self.get_modifier(self.spellcasting_ability)
+            spell_dc = 8 + self.proficiency_bonus + spell_mod
+            spell_atk = self.proficiency_bonus + spell_mod
+            atk_str = f"+{spell_atk}" if spell_atk >= 0 else str(spell_atk)
+            lines.append(f"  Spellcasting ({self.spellcasting_ability}): DC {spell_dc}, Atk {atk_str}")
+            if self.prepared_spells:
+                lines.append(f"  Prepared: {', '.join(self.prepared_spells)}")
+
+        # Equipment highlights (first 5)
+        if self.inventory:
+            equip = ', '.join(self.inventory[:5])
+            extra = f" (+{len(self.inventory) - 5} more)" if len(self.inventory) > 5 else ""
+            lines.append(f"  Equipment: {equip}{extra}")
+
+        # Backstory
+        if self.backstory:
+            lines.append(f"  Backstory: {self.backstory}")
+
+        return "\n".join(lines)

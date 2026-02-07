@@ -176,6 +176,22 @@ class Campaign:
     def get_character(self, player_id: str) -> Character | None:
         return self.characters.get(player_id)
 
+    def get_character_by_name(self, name: str) -> Character | None:
+        """Find a character by name (case-insensitive)."""
+        name_lower = name.lower()
+        for char in self.characters.values():
+            if char.name.lower() == name_lower:
+                return char
+        return None
+
+    def get_player_id_by_char_name(self, name: str) -> str | None:
+        """Find a player ID by their character's name (case-insensitive)."""
+        name_lower = name.lower()
+        for pid, char in self.characters.items():
+            if char.name.lower() == name_lower:
+                return pid
+        return None
+
     def add_character(self, player_id: str, char: Character):
         self.characters[player_id] = char
 
@@ -183,12 +199,12 @@ class Campaign:
         self.characters.pop(player_id, None)
 
     def get_party_summary(self) -> str:
-        """Get a summary of all characters for DM context."""
+        """Get a detailed summary of all characters for DM context."""
         if not self.characters:
             return "No characters created yet."
         lines = []
         for char in self.characters.values():
-            lines.append(f"- {char.full_context()}")
+            lines.append(char.dm_stat_block())
         return "\n".join(lines)
 
     def add_to_history(self, role: str, content: str):
