@@ -4,8 +4,41 @@ import discord
 from discord.ext import commands
 
 from bot.models.campaign import CampaignPhase
-from bot.data.rules import xp_for_next_level, proficiency_bonus, modifier
+from bot.data.rules import ABILITY_NAMES, SKILLS, xp_for_next_level, proficiency_bonus, modifier
 from bot.data.spells import get_spell_slots, is_spellcaster, is_pact_caster
+
+# Valid stat keys for modifiers
+_VALID_STATS = set(ABILITY_NAMES) | set(SKILLS.keys()) | {"ac", "hp", "speed"}
+# Aliases for convenience
+_STAT_ALIASES = {
+    "str": "STR", "dex": "DEX", "con": "CON", "int": "INT", "wis": "WIS", "cha": "CHA",
+    "strength": "STR", "dexterity": "DEX", "constitution": "CON",
+    "intelligence": "INT", "wisdom": "WIS", "charisma": "CHA",
+    "armor": "ac", "armor class": "ac",
+    "health": "hp", "hitpoints": "hp", "hit points": "hp",
+}
+
+def _resolve_stat(name: str) -> str | None:
+    """Resolve a stat name to its canonical form, or None if invalid."""
+    # Check alias first
+    lower = name.lower().strip()
+    if lower in _STAT_ALIASES:
+        return _STAT_ALIASES[lower]
+    # Check exact (case-sensitive for skills like "Perception")
+    if name in _VALID_STATS:
+        return name
+    # Try title case for skills
+    titled = name.strip().title()
+    if titled in _VALID_STATS:
+        return titled
+    # Try uppercase for abilities
+    upper = name.strip().upper()
+    if upper in _VALID_STATS:
+        return upper
+    # Check lowercase for ac/hp/speed
+    if lower in _VALID_STATS:
+        return lower
+    return None
 from bot.dice import roll_die
 from bot.storage import load_campaign, save_campaign
 
@@ -392,6 +425,143 @@ class ProgressionCog(commands.Cog, name="Progression"):
 
         else:
             await ctx.send("Usage: `!feat`, `!feat add <name>`, or `!feat remove <name>`")
+
+    @commands.command(name="modifier", aliases=["mod", "buff"])
+    async def modifier_cmd(self, ctx: commands.Context, *, action: str = ""):
+        """Add, remove, or list stat modifiers on your character.
+
+        Modifiers represent magic items, buffs, equipment bonuses, etc.
+
+        Usage: !modifier (list all modifiers)
+        Usage: !modifier add <source> <stat> <+/-number>
+        Usage: !modifier remove <source>
+
+        Stats: STR, DEX, CON, INT, WIS, CHA, ac, hp, speed, or any skill name
+        Examples:
+          !modifier add Shield ac +2
+          !modifier add Cloak of Protection ac +1
+          !modifier add Gauntlets of Ogre Power STR +5
+          !modifier add Boots of Elvenkind Stealth +5
+          !modifier remove Shield
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        if not action:
+            # List modifiers
+            if not char.modifiers:
+                await ctx.send(f"**{char.name}** has no active modifiers. Use `!modifier add <source> <stat> <+/-value>` to add one.")
+                return
+            lines = [f"**{char.name}'s Modifiers:**"]
+            for source, bonuses in char.modifiers.items():
+                bonus_strs = []
+                for stat, val in bonuses.items():
+                    sign = "+" if val >= 0 else ""
+                    bonus_strs.append(f"{stat} {sign}{val}")
+                lines.append(f"  `•` **{source}** — {', '.join(bonus_strs)}")
+            lines.append(f"\n*Use `!modifier remove <source>` to remove.*")
+            await ctx.send("\n".join(lines))
+            return
+
+        parts = action.split(None, 1)
+        sub = parts[0].lower()
+
+        if sub == "add" and len(parts) > 1:
+            # Parse: <source name> <stat> <+/-number>
+            # The last two tokens are stat and value, everything before is the source name
+            tokens = parts[1].rsplit(None, 2)
+            if len(tokens) < 3:
+                await ctx.send(
+                    "Usage: `!modifier add <source> <stat> <+/-value>`\n"
+                    "Example: `!modifier add Shield ac +2`"
+                )
+                return
+
+            source_name = tokens[0]
+            stat_raw = tokens[1]
+            val_raw = tokens[2]
+
+            # Resolve stat
+            stat = _resolve_stat(stat_raw)
+            if not stat:
+                await ctx.send(
+                    f"Unknown stat: `{stat_raw}`\n"
+                    f"Valid stats: STR, DEX, CON, INT, WIS, CHA, ac, hp, speed, "
+                    f"or any skill name (Perception, Stealth, Athletics, etc.)"
+                )
+                return
+
+            # Parse value
+            try:
+                value = int(val_raw)
+            except ValueError:
+                await ctx.send(f"Invalid value: `{val_raw}`. Use a number like `+2` or `-1`.")
+                return
+
+            # Add or update the modifier
+            if source_name in char.modifiers:
+                char.modifiers[source_name][stat] = value
+            else:
+                char.modifiers[source_name] = {stat: value}
+
+            # Recalculate derived stats
+            if stat in ("ac", "DEX", "CON", "WIS"):
+                char.calc_ac()
+            if stat == "hp":
+                char.max_hp += value
+                char.current_hp = min(char.current_hp + max(value, 0), char.max_hp)
+
+            save_campaign(campaign)
+            sign = "+" if value >= 0 else ""
+            await ctx.send(f"**{char.name}** gained modifier: **{source_name}** ({stat} {sign}{value})")
+
+        elif sub == "remove" and len(parts) > 1:
+            source_name = parts[1].strip()
+            # Try exact match first, then case-insensitive
+            match_key = None
+            for key in char.modifiers:
+                if key == source_name:
+                    match_key = key
+                    break
+            if not match_key:
+                for key in char.modifiers:
+                    if key.lower() == source_name.lower():
+                        match_key = key
+                        break
+
+            if not match_key:
+                await ctx.send(f"**{char.name}** doesn't have a modifier called **{source_name}**.")
+                return
+
+            removed = char.modifiers.pop(match_key)
+            # Recalculate derived stats
+            has_ac = any(s in ("ac", "DEX", "CON", "WIS") for s in removed)
+            if has_ac:
+                char.calc_ac()
+            if "hp" in removed:
+                hp_val = removed["hp"]
+                char.max_hp -= hp_val
+                char.current_hp = min(char.current_hp, char.max_hp)
+
+            save_campaign(campaign)
+            bonus_strs = []
+            for stat, val in removed.items():
+                sign = "+" if val >= 0 else ""
+                bonus_strs.append(f"{stat} {sign}{val}")
+            await ctx.send(f"Removed modifier **{match_key}** ({', '.join(bonus_strs)}) from **{char.name}**.")
+
+        else:
+            await ctx.send(
+                "Usage: `!modifier`, `!modifier add <source> <stat> <value>`, "
+                "or `!modifier remove <source>`"
+            )
 
 
 async def setup(bot: commands.Bot):

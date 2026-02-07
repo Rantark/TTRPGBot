@@ -297,7 +297,10 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!deathsave` — Roll a death saving throw\n"
                 "`!feat` — List your feats\n"
                 "`!feat add <name>` — Add a feat\n"
-                "`!feat remove <name>` — Remove a feat"
+                "`!feat remove <name>` — Remove a feat\n"
+                "`!modifier` — List active modifiers (buffs, items, etc.)\n"
+                "`!modifier add <source> <stat> <+/-val>` — Add a modifier\n"
+                "`!modifier remove <source>` — Remove a modifier"
             ),
         },
         "spells": {
@@ -341,7 +344,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
-        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression",
+        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
     }
 

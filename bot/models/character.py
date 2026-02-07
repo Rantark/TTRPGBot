@@ -45,6 +45,7 @@ class Character:
         self.feats = []               # List of feat names
         self.backstory = ""           # Short character backstory
         self.conditions = []
+        self.modifiers = {}           # Named bonuses: {"Shield +2": {"ac": 2}, "Gauntlets of Ogre Power": {"STR": 19}}
         self.notes = ""
         # Dragonborn ancestry
         self.draconic_ancestry = None
@@ -60,17 +61,31 @@ class Character:
         # Creation state tracking
         self.creation_complete = False
 
+    def get_stat_bonus(self, stat: str) -> int:
+        """Sum all modifier bonuses for a given stat key (ac, hp, speed, STR, Perception, etc.)."""
+        total = 0
+        for bonuses in self.modifiers.values():
+            total += bonuses.get(stat, 0)
+        return total
+
+    def get_effective_ability(self, ability: str) -> int:
+        """Get ability score after modifiers are applied."""
+        base = self.abilities.get(ability, 10)
+        return base + self.get_stat_bonus(ability)
+
     def get_modifier(self, ability: str) -> int:
-        return modifier(self.abilities.get(ability, 10))
+        return modifier(self.get_effective_ability(ability))
 
     def get_modifier_str(self, ability: str) -> str:
-        return modifier_str(self.abilities.get(ability, 10))
+        return modifier_str(self.get_effective_ability(ability))
 
     def get_skill_modifier(self, skill_name: str) -> int:
         ability = SKILLS.get(skill_name, "STR")
         mod = self.get_modifier(ability)
         if skill_name in self.skill_proficiencies:
             mod += self.proficiency_bonus
+        # Add direct skill bonuses (e.g., Cloak of Elvenkind +5 to Stealth)
+        mod += self.get_stat_bonus(skill_name)
         return mod
 
     def get_save_modifier(self, ability: str) -> int:
@@ -90,14 +105,16 @@ class Character:
         self.hit_dice_remaining = self.level
 
     def calc_ac(self):
-        """Calculate base AC (unarmored)."""
-        self.ac = calc_ac_unarmored(self.abilities["DEX"])
+        """Calculate base AC (unarmored) plus modifier bonuses."""
+        self.ac = calc_ac_unarmored(self.get_effective_ability("DEX"))
         # Barbarian unarmored defense
         if self.char_class == "Barbarian":
             self.ac = 10 + self.get_modifier("DEX") + self.get_modifier("CON")
         # Monk unarmored defense
         elif self.char_class == "Monk":
             self.ac = 10 + self.get_modifier("DEX") + self.get_modifier("WIS")
+        # Apply AC modifiers (shields, magic items, etc.)
+        self.ac += self.get_stat_bonus("ac")
 
     def update_proficiency(self):
         self.proficiency_bonus = proficiency_bonus(self.level)
@@ -186,8 +203,8 @@ class Character:
             lines.append(f" {left}  {right}")
         lines.append("```")
 
-        # ── Traits, Features & Feats ──
-        if self.traits or self.features or self.feats or self.languages:
+        # ── Traits, Features, Feats & Modifiers ──
+        if self.traits or self.features or self.feats or self.languages or self.modifiers:
             lines.append(f"╠{'═' * 42}╣")
             if self.traits:
                 lines.append(f"  📜 **Traits:** {', '.join(self.traits)}")
@@ -197,6 +214,15 @@ class Character:
                 lines.append(f"  🏅 **Feats:** {', '.join(self.feats)}")
             if self.languages:
                 lines.append(f"  💬 **Languages:** {', '.join(self.languages)}")
+            if self.modifiers:
+                mod_strs = []
+                for source, bonuses in self.modifiers.items():
+                    parts = []
+                    for stat, val in bonuses.items():
+                        sign = "+" if val >= 0 else ""
+                        parts.append(f"{stat} {sign}{val}")
+                    mod_strs.append(f"{source} ({', '.join(parts)})")
+                lines.append(f"  🔧 **Modifiers:** {', '.join(mod_strs)}")
 
         # ── Spellcasting ──
         if self.spellcasting_ability:
@@ -260,6 +286,7 @@ class Character:
             "features": self.features,
             "inventory": self.inventory,
             "feats": self.feats,
+            "modifiers": self.modifiers,
             "backstory": self.backstory,
             "inspiration": self.inspiration,
             "death_saves": self.death_saves,
@@ -352,6 +379,14 @@ class Character:
             lines.append(f"  Spellcasting ({self.spellcasting_ability}): DC {spell_dc}, Atk {atk_str}")
             if self.prepared_spells:
                 lines.append(f"  Prepared: {', '.join(self.prepared_spells)}")
+
+        # Active modifiers
+        if self.modifiers:
+            mod_strs = []
+            for source, bonuses in self.modifiers.items():
+                parts = [f"{s} {'+' if v >= 0 else ''}{v}" for s, v in bonuses.items()]
+                mod_strs.append(f"{source} ({', '.join(parts)})")
+            lines.append(f"  Modifiers: {', '.join(mod_strs)}")
 
         # Equipment highlights (first 5)
         if self.inventory:
