@@ -17,15 +17,17 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - [How a Game Works](#how-a-game-works)
 - [Command Reference](#command-reference)
   - [Campaign Management](#campaign-management)
-  - [Character Creation](#character-creation)
+  - [Character Creation & Sheets](#character-creation--sheets)
   - [Gameplay (RP Scenes)](#gameplay-rp-scenes)
   - [Dice & Rolls](#dice--rolls)
-  - [Combat](#combat)
+  - [Combat & Tactical Map](#combat--tactical-map)
   - [Progression & Resources](#progression--resources)
+  - [Spells & Spellcasting](#spells--spellcasting)
   - [Utility](#utility)
 - [Character Creation Walkthrough](#character-creation-walkthrough)
 - [RP Scene Coordination](#rp-scene-coordination)
-- [Combat System](#combat-system)
+- [Combat System & Tactical Map](#combat-system--tactical-map)
+- [Spell System](#spell-system)
 - [Prompt Caching (Cost Savings)](#prompt-caching-cost-savings)
 - [Environment Variables](#environment-variables)
 - [Project Structure](#project-structure)
@@ -36,12 +38,14 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 ## Features at a Glance
 
 - **AI Dungeon Master** — Claude narrates the story, roleplays NPCs, manages encounters, and adjudicates rules
-- **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection
+- **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, backstory
 - **Campaign System** — Pitch/vote on concepts, setup phase for character creation, DM-controlled start
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
-- **Combat System** — Initiative tracking, turn order, turn locking, NPC management
+- **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
+- **Spell System** — Track spell slots, known/prepared spells, cantrips, and casting (full/half/pact casters)
 - **Full Dice Engine** — Standard notation (d20, 2d6+3), ability checks, saving throws, attack rolls with advantage/disadvantage
-- **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves
+- **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves, feats
+- **Equipment & Inventory** — Starting equipment selection during creation, add/remove items anytime
 - **Utility** — AI recaps, investigation clue tracker, NPC journal, private DM whispers
 - **`!ask` Command** — Ask the DM rules questions without advancing the story
 - **Prompt Caching** — Anthropic prompt caching reduces API costs by up to 90% on repeat calls
@@ -249,7 +253,7 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!endcampaign` | DM | End the campaign permanently |
 | `!campaigninfo` | Anyone | View campaign status and player list |
 
-### Character Creation
+### Character Creation & Sheets
 
 | Command | Description |
 |---|---|
@@ -258,6 +262,11 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!deletechar` | Delete your character and start over |
 | `!sheet` | View your full character sheet |
 | `!sheet @player` | View another player's character sheet |
+| `!equipment` | View your inventory/gear (aliases: `!inv`, `!inventory`) |
+| `!equipment add <item>` | Add an item to your inventory |
+| `!equipment remove <item or #>` | Remove an item by name or number |
+| `!backstory` | View your character's backstory |
+| `!backstory <text>` | Set or update your backstory |
 
 ### Gameplay (RP Scenes)
 
@@ -286,7 +295,7 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!save <ability>` | `!save DEX` | Saving throw with proficiency if applicable |
 | `!attack` | `!attack` | Attack roll (d20 + ability mod + proficiency) |
 
-### Combat
+### Combat & Tactical Map
 
 | Command | Who | Description |
 |---|---|---|
@@ -298,21 +307,45 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!turnorder` | Anyone | Display the current initiative order |
 | `!next` | DM | Advance to the next turn |
 | `!pass` | Player | Skip your combat turn |
+| `!map` | Anyone | Display the ASCII tactical map |
+| `!place <name> <x> <y>` | DM | Place a token on the map (optional 4th arg for custom label) |
+| `!move <dir> <dist>` | Player/DM | Move on map (n/s/e/w/ne/nw/se/sw + distance) |
+| `!move <x> <y>` | Player/DM | Move to absolute coordinates |
+| `!mapsize <w> <h>` | DM | Resize the map grid (5-20 each dimension) |
 | `!combatend` | DM | End the combat encounter |
 
 ### Progression & Resources
 
 | Command | Who | Description |
 |---|---|---|
-| `!rest short` | Player | Short rest — spend hit dice to heal |
-| `!rest long` | Player | Long rest — full HP, restore hit dice |
+| `!rest short` | Player | Short rest — spend hit dice to heal (warlock pact slots restored) |
+| `!rest long` | Player | Long rest — full HP, restore hit dice & all spell slots |
 | `!hp` | Player | View your current HP |
 | `!hp +5` / `!hp -3` | Player/DM | Heal or take damage |
 | `!xp <amount>` | DM | Award XP to all players |
 | `!xp <amount> @player` | DM | Award XP to one player |
-| `!levelup` | Player | Level up if you have enough XP |
+| `!levelup` | Player | Level up if you have enough XP (spell slots update automatically) |
 | `!inspiration @player` | DM | Grant inspiration |
 | `!deathsave` | Player | Roll a death saving throw |
+| `!feat` | Player | List your feats |
+| `!feat add <name>` | Player | Add a feat |
+| `!feat remove <name>` | Player | Remove a feat |
+
+### Spells & Spellcasting
+
+| Command | Description |
+|---|---|
+| `!spells` | View your known spells, prepared spells, and cantrips |
+| `!slots` | View your current spell slots (visual diamond pips) |
+| `!learn <spell>` | Add a spell to your known spells |
+| `!learncantrip <name>` | Learn a cantrip (enforces class max) |
+| `!forget <spell>` | Remove a spell from your known list |
+| `!forget cantrip <name>` | Remove a cantrip |
+| `!prepare <spell>` | Prepare or unprepare a known spell |
+| `!cast <spell>` | Cast a spell using the lowest available slot |
+| `!cast <spell> <level>` | Cast a spell at a specific slot level |
+
+Spell slots are tracked per D&D 5e rules: full casters (Bard, Cleric, Druid, Sorcerer, Wizard), half casters (Paladin, Ranger), and pact casters (Warlock) each have their own slot progression. Warlock pact magic slots recover on short rest; all other slots recover on long rest.
 
 ### Utility
 
@@ -327,13 +360,13 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!npcs add <name> \| <desc>` | Add an NPC to the journal |
 | `!npcs remove <#>` | Remove an NPC |
 | `!whisper <msg>` | Private message to the DM (sent via Discord DM) |
-| `!commands [category]` | Show help menu (campaign, character, gameplay, dice, combat, progression, utility) |
+| `!commands [category]` | Show help menu (campaign, character, gameplay, dice, combat, progression, spells, utility) |
 
 ---
 
 ## Character Creation Walkthrough
 
-When a player types `!createchar`, the bot walks them through 7 steps:
+When a player types `!createchar`, the bot walks them through 9 steps:
 
 ### Step 1: Name
 
@@ -408,7 +441,34 @@ Racial bonuses are added on top automatically.
 
 Choose from your class's skill list (skills already granted by background are excluded).
 
-After confirming, the character is saved and ready to play. View anytime with `!sheet`.
+### Step 8: Starting Equipment
+
+Each class comes with a set of starting equipment. Some items are fixed (e.g., "Explorer's pack"), while others present a choice:
+
+```
+Bot:     Choose starting equipment (1 of 2):
+           1. Greataxe
+           2. Any martial weapon
+!cc 1
+Bot:     You selected: Greataxe
+         Choose starting equipment (2 of 2):
+           1. Two handaxes
+           2. Any simple weapon
+!cc 2
+Bot:     You selected: Any simple weapon
+         Fixed items added: Explorer's pack, 4 javelins
+```
+
+### Step 9: Backstory (Optional)
+
+Write a short backstory for your character, or type `skip` to leave it blank. You can always set or update it later with `!backstory <text>`.
+
+```
+!cc A former soldier who deserted after witnessing corruption in the ranks.
+Bot:     Backstory saved!
+```
+
+After confirming, the character is saved and ready to play. View anytime with `!sheet`, `!equipment`, or `!backstory`.
 
 ---
 
@@ -436,7 +496,7 @@ This prevents the problem where two players talk to the DM separately and get co
 
 ---
 
-## Combat System
+## Combat System & Tactical Map
 
 ### Starting Combat
 
@@ -477,12 +537,109 @@ Bot:     Initiative Order — Round 1
 - `!next` (DM only) advances to the next turn
 - `!turnorder` shows the current order at any time
 
+### Tactical Map
+
+When combat starts, the DM can place tokens on an ASCII grid map. Players can then see positions and move their characters.
+
+**Placing tokens (DM):**
+
+```
+DM:      !place Thandril 3 2
+Bot:     Thandril (TH) placed at (3, 2).
+
+DM:      !place Goblin1 7 4 G1
+Bot:     Goblin1 (G1) placed at (7, 4).
+```
+
+**Viewing the map:**
+
+```
+Player:  !map
+Bot:     Combat Map — Round 1
+            0  1  2  3  4  5  6  7  8  9
+            ┌──┬──┬──┬──┬──┬──┬──┬──┬──┬──┐
+          0 │  │  │  │  │  │  │  │  │  │  │
+            ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┤
+          1 │  │  │  │  │  │  │  │  │  │  │
+            ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┤
+          2 │  │  │  │TH│  │  │  │  │  │  │
+            ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┤
+          3 │  │  │  │  │  │  │  │  │  │  │
+            ├──┼──┼──┼──┼──┼──┼──┼──┼──┼──┤
+          4 │  │  │  │  │  │  │  │G1│  │  │
+            ...
+         Legend: G1=Goblin1 (7,4)  TH=Thandril (3,2)
+```
+
+**Moving tokens:**
+
+```
+Player:  !move north 2       # Directional: n/s/e/w/ne/nw/se/sw + distance
+Player:  !move 5 3           # Absolute: move to coordinates (5, 3)
+DM:      !move Goblin1 south 1   # DM can move NPCs by name
+```
+
+**Resizing the map (DM):**
+
+```
+DM:      !mapsize 15 12
+Bot:     Combat map resized to 15x12. All tokens cleared.
+```
+
+The map grid supports sizes from 5x5 to 20x20. Tokens are clamped to stay within bounds.
+
 ### Ending Combat
 
 ```
 DM:      !combatend
 Bot:     Combat has ended after 4 round(s). Resume roleplay freely!
 ```
+
+---
+
+## Spell System
+
+The bot tracks spellcasting for all D&D 5e caster types:
+
+| Caster Type | Classes | Slot Recovery |
+|---|---|---|
+| **Full Caster** | Bard, Cleric, Druid, Sorcerer, Wizard | Long rest |
+| **Half Caster** | Paladin, Ranger | Long rest |
+| **Pact Caster** | Warlock | Short rest |
+
+Non-caster classes (Barbarian, Fighter, Monk, Rogue) have no spell slots.
+
+### Spellcasting Workflow
+
+```
+Player:  !learncantrip Fire Bolt
+Bot:     Learned cantrip: Fire Bolt (2/3 cantrips known)
+
+Player:  !learn Magic Missile
+Bot:     Learned spell: Magic Missile
+
+Player:  !prepare Magic Missile
+Bot:     Magic Missile is now prepared.
+
+Player:  !cast Magic Missile
+Bot:     Cast Magic Missile using a level 1 slot! (3/4 slots remaining)
+
+Player:  !slots
+Bot:     Spell Slots for Thandril:
+         Lv1: ◆◆◆◇ (3/4)
+
+Player:  !rest long
+Bot:     [All slots restored]
+```
+
+### Spell Save DC & Attack Bonus
+
+These are calculated automatically based on your spellcasting ability:
+
+- **Spell Save DC** = 8 + proficiency bonus + spellcasting ability modifier
+- **Spell Attack** = proficiency bonus + spellcasting ability modifier
+
+View them on your character sheet (`!sheet`) or spell list (`!spells`).
 
 ---
 
@@ -530,18 +687,20 @@ TTRPGBot/
 │   ├── storage.py            # Persistent JSON file storage per campaign
 │   ├── cogs/
 │   │   ├── campaign.py       # !newcampaign, !pitch, !vote, !startcampaign, etc.
-│   │   ├── character.py      # !createchar, !cc (7-step interactive flow), !sheet
+│   │   ├── character.py      # !createchar, !cc (9-step creation), !sheet, !equipment, !backstory
 │   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, RP queue system
-│   │   ├── combat.py         # !combatstart, !initiative, !next, turn order
-│   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave
+│   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
+│   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !feat
+│   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
 │   │   └── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands
 │   ├── models/
-│   │   ├── character.py      # Character class — stats, abilities, serialization
-│   │   └── campaign.py       # Campaign, CombatState, RP queue state
+│   │   ├── character.py      # Character class — stats, abilities, spells, serialization
+│   │   └── campaign.py       # Campaign, CombatState, CombatMap, RP queue state
 │   └── data/
 │       ├── races.py          # All PHB races + subraces with bonuses and traits
-│       ├── classes.py         # All 12 PHB classes with proficiencies
+│       ├── classes.py         # All 12 PHB classes with proficiencies & starting equipment
 │       ├── backgrounds.py    # 13 PHB backgrounds with skills and features
+│       ├── spells.py         # Spell slot tables for full/half/pact casters
 │       └── rules.py          # Ability scores, skills, proficiency table, XP table
 ├── data/
 │   └── campaigns/            # Auto-created — JSON save files live here
