@@ -28,6 +28,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - [RP Scene Coordination](#rp-scene-coordination)
 - [Combat System & Tactical Map](#combat-system--tactical-map)
 - [Spell System](#spell-system)
+- [DM Tools & Action Tags](#dm-tools--action-tags)
 - [Prompt Caching (Cost Savings)](#prompt-caching-cost-savings)
 - [Environment Variables](#environment-variables)
 - [Project Structure](#project-structure)
@@ -43,6 +44,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
 - **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
 - **Spell System** — Track spell slots, known/prepared spells, cantrips, and casting (full/half/pact casters)
+- **DM Tools** — `!dm` narration command, action tags for automatic game state updates, DM whispers to individual players
 - **Full Dice Engine** — Standard notation (d20, 2d6+3), ability checks, saving throws, attack rolls with advantage/disadvantage
 - **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves, feats
 - **Equipment & Inventory** — Starting equipment selection during creation, add/remove items anytime
@@ -283,6 +285,8 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!pass` | Do nothing this round |
 | `!pending` | See who hasn't acted yet |
 | `!resolve` | *(DM)* Force the round to resolve early |
+| `!dm <prompt>` | *(DM)* Prompt Claude to narrate a scene or event |
+| `!dm-whisper @player <msg>` | *(DM)* Send a private message to a player via DM |
 | `!ask <question>` | Ask the DM a rules question *(does NOT advance the story)* |
 | `!ooc <message>` | Out-of-character chat *(not queued, DM doesn't respond)* |
 
@@ -643,6 +647,63 @@ View them on your character sheet (`!sheet`) or spell list (`!spells`).
 
 ---
 
+## DM Tools & Action Tags
+
+### DM-Initiated Narration (`!dm`)
+
+The DM can prompt Claude to narrate scenes, events, or story beats without waiting for player actions:
+
+```
+DM:      !dm A dragon lands in front of the party, shaking the ground
+Bot:     *The earth trembles beneath your feet as a massive shadow blots out
+         the sun. A red dragon descends, its wings sending gusts of scorching
+         air across the clearing...*
+```
+
+Use this for scene transitions, NPC arrivals, time passing, traps triggering, or any story moment the DM wants to drive.
+
+### Action Tags (Automatic Game State Updates)
+
+Claude automatically updates game state through hidden tags in its narration. Players never see the tags — they only see the narrative text. The bot parses and executes them behind the scenes.
+
+| Tag | Effect | Example |
+|---|---|---|
+| `[DAMAGE: Name -X]` | Deal X damage | `[DAMAGE: Thandril -9]` |
+| `[DAMAGE: Name +X]` | Heal X HP | `[DAMAGE: Elara +5]` |
+| `[CONDITION: Name add X]` | Apply a condition | `[CONDITION: Kael add poisoned]` |
+| `[CONDITION: Name remove X]` | Remove a condition | `[CONDITION: Kael remove poisoned]` |
+| `[NPC_DEFEAT: Name]` | Remove NPC from combat | `[NPC_DEFEAT: Goblin1]` |
+| `[SPELL_SLOT: Name -level]` | Consume a spell slot | `[SPELL_SLOT: Elara -1]` |
+| `[WHISPER: Name] msg` | Private DM to one player | `[WHISPER: Elara] You see a hidden door` |
+
+**Example of what Claude might write:**
+
+> "The orc's axe crashes down! [DAMAGE: Thandril -9] Thandril, you stagger from 9 slashing damage."
+
+Players see: *"The orc's axe crashes down! Thandril, you stagger from 9 slashing damage."*
+Behind the scenes: Thandril's HP is reduced by 9.
+
+### DM Whispers
+
+Two ways to send private information to a player:
+
+1. **Manual:** `!dm-whisper @Player Your passive Perception notices a tripwire` (aliases: `!dmw`, `!secret`)
+2. **Automatic:** Claude includes `[WHISPER: CharName]` tags in narration — the bot sends the secret as a Discord DM
+
+Whispers are hidden from the channel. Only the target player sees the message.
+
+### Full Party Stats for Claude
+
+Claude sees detailed stats for every character in its prompt, including:
+- HP, AC, ability modifiers, proficiency bonus
+- Key skill modifiers (Perception, Investigation, Stealth, Insight, Athletics, Arcana)
+- Passive Perception & Investigation scores
+- Active conditions, prepared spells, equipment, and backstory
+
+This allows Claude to make informed DM decisions — calling for appropriate checks, adjusting difficulty, and referencing character details in narration.
+
+---
+
 ## Prompt Caching (Cost Savings)
 
 The bot uses [Anthropic's prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to dramatically reduce API costs. Three cache breakpoints are placed strategically:
@@ -682,13 +743,13 @@ Cache stats — read: 3200, created: 150, uncached: 85, output: 312
 TTRPGBot/
 ├── bot/
 │   ├── main.py              # Entry point — bot setup, event handlers, error handling
-│   ├── dm_engine.py          # Claude AI DM — API calls with prompt caching
+│   ├── dm_engine.py          # Claude AI DM — API calls, prompt caching, action tag parser
 │   ├── dice.py               # Dice rolling engine (notation parsing, ability checks)
 │   ├── storage.py            # Persistent JSON file storage per campaign
 │   ├── cogs/
 │   │   ├── campaign.py       # !newcampaign, !pitch, !vote, !startcampaign, etc.
 │   │   ├── character.py      # !createchar, !cc (9-step creation), !sheet, !equipment, !backstory
-│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, RP queue system
+│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !dm-whisper, RP queue
 │   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
 │   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !feat
 │   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
