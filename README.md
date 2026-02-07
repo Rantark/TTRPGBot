@@ -46,7 +46,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - **Spell System** — Track spell slots, known/prepared spells, cantrips, and casting (full/half/pact casters)
 - **DM Tools** — `!dm` narration command, action tags for automatic game state updates, DM whispers to individual players
 - **Full Dice Engine** — Standard notation (d20, 2d6+3), ability checks, saving throws, attack rolls with advantage/disadvantage
-- **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves, feats
+- **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves, feats, stat modifiers
 - **Equipment & Inventory** — Starting equipment selection during creation, add/remove items anytime
 - **Utility** — AI recaps, investigation clue tracker, NPC journal, private DM whispers
 - **`!ask` Command** — Ask the DM rules questions without advancing the story
@@ -334,6 +334,9 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!feat` | Player | List your feats |
 | `!feat add <name>` | Player | Add a feat |
 | `!feat remove <name>` | Player | Remove a feat |
+| `!modifier` | Player | List active stat modifiers (magic items, buffs, etc.) |
+| `!modifier add <source> <stat> <+/-val>` | Player | Add a named modifier (e.g., `Shield ac +2`) |
+| `!modifier remove <source>` | Player | Remove a modifier by source name |
 
 ### Spells & Spellcasting
 
@@ -702,6 +705,34 @@ Claude sees detailed stats for every character in its prompt, including:
 
 This allows Claude to make informed DM decisions — calling for appropriate checks, adjusting difficulty, and referencing character details in narration.
 
+### Stat Modifiers
+
+Track magic items, equipment bonuses, buffs, and other stat adjustments with the `!modifier` command (aliases: `!mod`, `!buff`):
+
+```
+Player:  !modifier add Shield ac +2
+Bot:     Thandril gained modifier: Shield (ac +2)
+
+Player:  !modifier add Gauntlets of Ogre Power STR +5
+Bot:     Thandril gained modifier: Gauntlets of Ogre Power (STR +5)
+
+Player:  !modifier add Boots of Elvenkind Stealth +5
+Bot:     Thandril gained modifier: Boots of Elvenkind (Stealth +5)
+
+Player:  !modifier
+Bot:     Thandril's Modifiers:
+           • Shield — ac +2
+           • Gauntlets of Ogre Power — STR +5
+           • Boots of Elvenkind — Stealth +5
+
+Player:  !modifier remove Shield
+Bot:     Removed modifier Shield (ac +2) from Thandril.
+```
+
+**Supported stats:** STR, DEX, CON, INT, WIS, CHA, ac, hp, speed, and all 18 skill names (Perception, Stealth, Athletics, etc.).
+
+Modifiers automatically affect all derived calculations — ability checks, saving throws, skill rolls, AC, and passive scores. They're visible on `!sheet` and to Claude in the DM context.
+
 ---
 
 ## Prompt Caching (Cost Savings)
@@ -751,7 +782,7 @@ TTRPGBot/
 │   │   ├── character.py      # !createchar, !cc (9-step creation), !sheet, !equipment, !backstory
 │   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !dm-whisper, RP queue
 │   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
-│   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !feat
+│   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !feat, !modifier
 │   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
 │   │   └── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands
 │   ├── models/
