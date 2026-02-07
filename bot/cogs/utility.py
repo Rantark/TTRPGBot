@@ -285,6 +285,21 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!deathsave` — Roll a death saving throw"
             ),
         },
+        "spells": {
+            "title": "Spells & Spellcasting",
+            "description": "Track spell slots, learn spells, prepare, and cast.",
+            "commands": (
+                "`!spells` — View your known spells, prepared spells, and cantrips\n"
+                "`!slots` — View your current spell slots\n"
+                "`!learn <spell>` — Add a spell to your known spells\n"
+                "`!learncantrip <name>` — Learn a cantrip\n"
+                "`!forget <spell>` — Remove a spell from your known list\n"
+                "`!forget cantrip <name>` — Remove a cantrip\n"
+                "`!prepare <spell>` — Prepare/unprepare a known spell\n"
+                "`!cast <spell>` — Cast a spell (uses lowest slot)\n"
+                "`!cast <spell> <level>` — Cast at a specific slot level"
+            ),
+        },
         "utility": {
             "title": "Utility",
             "description": "Recaps, tracking, and private messages.",
@@ -310,6 +325,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat",
+        "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
         "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
     }

@@ -47,6 +47,7 @@ EXTENSIONS = [
     "bot.cogs.gameplay",
     "bot.cogs.combat",
     "bot.cogs.progression",
+    "bot.cogs.spells",
     "bot.cogs.utility",
 ]
 

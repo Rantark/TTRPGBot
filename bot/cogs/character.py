@@ -297,6 +297,9 @@ class CharacterCog(commands.Cog, name="Character"):
         char.saving_throw_proficiencies = list(cls_data["saving_throws"])
         char.armor_proficiencies = list(cls_data["armor_proficiencies"])
         char.weapon_proficiencies = list(cls_data["weapon_proficiencies"])
+        # Set spellcasting ability if applicable
+        if cls_data.get("spellcaster"):
+            char.spellcasting_ability = cls_data.get("spellcasting_ability", "")
 
         session["class_data"] = cls_data
         session["step"] = "ability_method"

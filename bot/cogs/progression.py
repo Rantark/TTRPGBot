@@ -5,6 +5,7 @@ from discord.ext import commands
 
 from bot.models.campaign import CampaignPhase
 from bot.data.rules import xp_for_next_level, proficiency_bonus, modifier
+from bot.data.spells import get_spell_slots, is_spellcaster, is_pact_caster
 from bot.dice import roll_die
 from bot.storage import load_campaign, save_campaign
 
@@ -60,12 +61,20 @@ class ProgressionCog(commands.Cog, name="Progression"):
             char.hit_dice_remaining -= 1
             save_campaign(campaign)
 
-            await ctx.send(
+            msg = (
                 f"**{char.name}** takes a short rest.\n"
                 f"Spent 1 hit die: d{char.hit_die} [{roll}] + CON ({con_mod:+d}) = **{healed}** HP healed\n"
                 f"HP: {old_hp} -> **{char.current_hp}/{char.max_hp}**\n"
                 f"Hit Dice remaining: {char.hit_dice_remaining}"
             )
+
+            # Warlock pact magic recovers on short rest
+            if is_pact_caster(char.char_class) and char.spell_slots_used:
+                char.spell_slots_used = {}
+                msg += "\n*Pact Magic spell slots restored!*"
+                save_campaign(campaign)
+
+            await ctx.send(msg)
 
         elif rest_type == "long":
             old_hp = char.current_hp
@@ -75,15 +84,21 @@ class ProgressionCog(commands.Cog, name="Progression"):
             char.hit_dice_remaining = min(char.hit_dice_remaining + dice_restored, char.level)
             # Reset death saves
             char.death_saves = {"successes": 0, "failures": 0}
+            # Restore all spell slots
+            slots_restored = bool(char.spell_slots_used)
+            char.spell_slots_used = {}
             save_campaign(campaign)
 
             hp_restored = char.max_hp - old_hp
-            await ctx.send(
+            msg = (
                 f"**{char.name}** takes a long rest.\n"
                 f"HP fully restored: **{char.max_hp}/{char.max_hp}** (+{hp_restored})\n"
                 f"Hit Dice restored: {dice_restored} (total: {char.hit_dice_remaining})\n"
                 f"Death saves reset."
             )
+            if slots_restored:
+                msg += "\n*All spell slots restored!*"
+            await ctx.send(msg)
 
     @commands.command(name="hp")
     async def adjust_hp(self, ctx: commands.Context, amount: str = ""):
@@ -213,6 +228,23 @@ class ProgressionCog(commands.Cog, name="Progression"):
         char.current_hp += hp_gain
         char.hit_dice_remaining = char.level
 
+        # Update spell slots for new level
+        spell_msg = ""
+        if is_spellcaster(char.char_class):
+            old_slots = dict(char.spell_slots_max)
+            char.update_spell_slots()
+            if char.spell_slots_max != old_slots:
+                new_slots = []
+                for lvl in sorted(char.spell_slots_max, key=lambda x: int(x)):
+                    old_count = old_slots.get(lvl, 0)
+                    new_count = char.spell_slots_max[lvl]
+                    if new_count > old_count:
+                        new_slots.append(f"Lv{lvl}: {old_count}->{new_count}")
+                    elif lvl not in old_slots:
+                        new_slots.append(f"Lv{lvl}: NEW ({new_count})")
+                if new_slots:
+                    spell_msg = f"\nSpell Slots: {', '.join(new_slots)}"
+
         save_campaign(campaign)
 
         next_needed = xp_for_next_level(char.level)
@@ -221,7 +253,7 @@ class ProgressionCog(commands.Cog, name="Progression"):
         await ctx.send(
             f"**{char.name} LEVELS UP!** Level {old_level} -> **{char.level}**\n"
             f"HP Roll: d{char.hit_die} [{hp_roll}] + CON ({con_mod:+d}) = +{hp_gain} HP\n"
-            f"Max HP: **{char.max_hp}** | Prof Bonus: +{char.proficiency_bonus}\n"
+            f"Max HP: **{char.max_hp}** | Prof Bonus: +{char.proficiency_bonus}{spell_msg}\n"
             f"Next: {next_str}"
         )
 

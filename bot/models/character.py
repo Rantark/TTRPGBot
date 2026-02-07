@@ -4,6 +4,7 @@ from bot.data.rules import (
     ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS,
     modifier, modifier_str, proficiency_bonus, xp_for_next_level, calc_ac_unarmored,
 )
+from bot.data.spells import get_spell_slots
 
 
 class Character:
@@ -47,6 +48,13 @@ class Character:
         self.draconic_ancestry = None
         # Half-elf bonus ability choices
         self.half_elf_bonus_abilities = []
+        # Spellcasting
+        self.spellcasting_ability = ""   # "INT", "WIS", "CHA", or "" if non-caster
+        self.spell_slots_max = {}        # {spell_level(int as str): count} — max slots per level
+        self.spell_slots_used = {}       # {spell_level(int as str): count} — used slots per level
+        self.known_spells = []           # List of spell names the character knows
+        self.prepared_spells = []        # List of spell names currently prepared
+        self.cantrips = []               # List of cantrip names
         # Creation state tracking
         self.creation_complete = False
 
@@ -92,11 +100,18 @@ class Character:
     def update_proficiency(self):
         self.proficiency_bonus = proficiency_bonus(self.level)
 
+    def update_spell_slots(self):
+        """Recalculate spell slots based on class and level."""
+        if self.spellcasting_ability:
+            slots = get_spell_slots(self.char_class, self.level)
+            self.spell_slots_max = {str(k): v for k, v in slots.items()}
+
     def finalize(self):
         """Call after all creation steps to compute derived stats."""
         self.update_proficiency()
         self.calc_hp()
         self.calc_ac()
+        self.update_spell_slots()
         self.creation_complete = True
 
     def format_sheet(self) -> str:
@@ -144,6 +159,32 @@ class Character:
         if self.languages:
             lines.append("**Languages:** " + ", ".join(self.languages))
 
+        # Spellcasting section
+        if self.spellcasting_ability:
+            lines.append(sep)
+            spell_mod = self.get_modifier(self.spellcasting_ability)
+            spell_save = 8 + self.proficiency_bonus + spell_mod
+            spell_atk = self.proficiency_bonus + spell_mod
+            spell_atk_str = f"+{spell_atk}" if spell_atk >= 0 else str(spell_atk)
+            lines.append(
+                f"**Spellcasting** ({self.spellcasting_ability})  |  "
+                f"Save DC: {spell_save}  |  Attack: {spell_atk_str}"
+            )
+            if self.cantrips:
+                lines.append(f"**Cantrips:** {', '.join(self.cantrips)}")
+            if self.spell_slots_max:
+                slot_parts = []
+                for lvl in sorted(self.spell_slots_max, key=lambda x: int(x)):
+                    used = self.spell_slots_used.get(lvl, 0)
+                    total = self.spell_slots_max[lvl]
+                    remaining = total - used
+                    slot_parts.append(f"Lv{lvl}: {remaining}/{total}")
+                lines.append("**Spell Slots:** " + "  ".join(slot_parts))
+            if self.prepared_spells:
+                lines.append(f"**Prepared:** {', '.join(self.prepared_spells)}")
+            if self.known_spells:
+                lines.append(f"**Known Spells:** {', '.join(self.known_spells)}")
+
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
@@ -183,6 +224,12 @@ class Character:
             "notes": self.notes,
             "draconic_ancestry": self.draconic_ancestry,
             "half_elf_bonus_abilities": self.half_elf_bonus_abilities,
+            "spellcasting_ability": self.spellcasting_ability,
+            "spell_slots_max": self.spell_slots_max,
+            "spell_slots_used": self.spell_slots_used,
+            "known_spells": self.known_spells,
+            "prepared_spells": self.prepared_spells,
+            "cantrips": self.cantrips,
             "creation_complete": self.creation_complete,
         }
 
