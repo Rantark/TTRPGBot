@@ -341,6 +341,58 @@ class ProgressionCog(commands.Cog, name="Progression"):
 
         await ctx.send(msg)
 
+    @commands.command(name="feat")
+    async def feat(self, ctx: commands.Context, *, action: str = ""):
+        """Add, remove, or list your feats.
+
+        Usage: !feat (list your feats)
+        Usage: !feat add Great Weapon Master
+        Usage: !feat remove Great Weapon Master
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        if not action:
+            if not char.feats:
+                await ctx.send(f"**{char.name}** has no feats. Use `!feat add <name>` to add one.")
+                return
+            lines = [f"**{char.name}'s Feats:**"]
+            for i, feat_name in enumerate(char.feats, 1):
+                lines.append(f"  `{i}.` 🏅 {feat_name}")
+            await ctx.send("\n".join(lines))
+            return
+
+        parts = action.split(None, 1)
+        sub = parts[0].lower()
+
+        if sub == "add" and len(parts) > 1:
+            feat_name = parts[1].strip().title()
+            if feat_name in char.feats:
+                await ctx.send(f"**{char.name}** already has the feat **{feat_name}**.")
+                return
+            char.feats.append(feat_name)
+            save_campaign(campaign)
+            await ctx.send(f"**{char.name}** gained the feat **{feat_name}**! 🏅")
+
+        elif sub == "remove" and len(parts) > 1:
+            feat_name = parts[1].strip().title()
+            if feat_name in char.feats:
+                char.feats.remove(feat_name)
+                save_campaign(campaign)
+                await ctx.send(f"Removed feat **{feat_name}** from **{char.name}**.")
+            else:
+                await ctx.send(f"**{char.name}** doesn't have the feat **{feat_name}**.")
+
+        else:
+            await ctx.send("Usage: `!feat`, `!feat add <name>`, or `!feat remove <name>`")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ProgressionCog(bot))

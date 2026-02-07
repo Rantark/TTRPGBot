@@ -42,6 +42,7 @@ class Character:
         self.inventory = []
         self.inspiration = False
         self.death_saves = {"successes": 0, "failures": 0}
+        self.feats = []               # List of feat names
         self.conditions = []
         self.notes = ""
         # Dragonborn ancestry
@@ -184,13 +185,15 @@ class Character:
             lines.append(f" {left}  {right}")
         lines.append("```")
 
-        # ── Traits & Features ──
-        if self.traits or self.features or self.languages:
+        # ── Traits, Features & Feats ──
+        if self.traits or self.features or self.feats or self.languages:
             lines.append(f"╠{'═' * 42}╣")
             if self.traits:
                 lines.append(f"  📜 **Traits:** {', '.join(self.traits)}")
             if self.features:
                 lines.append(f"  ⭐ **Features:** {', '.join(self.features)}")
+            if self.feats:
+                lines.append(f"  🏅 **Feats:** {', '.join(self.feats)}")
             if self.languages:
                 lines.append(f"  💬 **Languages:** {', '.join(self.languages)}")
 
@@ -255,6 +258,7 @@ class Character:
             "traits": self.traits,
             "features": self.features,
             "inventory": self.inventory,
+            "feats": self.feats,
             "inspiration": self.inspiration,
             "death_saves": self.death_saves,
             "conditions": self.conditions,

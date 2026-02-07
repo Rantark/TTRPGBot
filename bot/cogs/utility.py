@@ -282,7 +282,10 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!xp <amount> @player` — *(DM)* Award XP to one player\n"
                 "`!levelup` — Level up (if you have enough XP)\n"
                 "`!inspiration @player` — *(DM)* Grant inspiration\n"
-                "`!deathsave` — Roll a death saving throw"
+                "`!deathsave` — Roll a death saving throw\n"
+                "`!feat` — List your feats\n"
+                "`!feat add <name>` — Add a feat\n"
+                "`!feat remove <name>` — Remove a feat"
             ),
         },
         "spells": {
@@ -326,7 +329,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
-        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression",
+        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
     }
 
