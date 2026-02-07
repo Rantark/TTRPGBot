@@ -114,76 +114,113 @@ class Character:
         self.update_spell_slots()
         self.creation_complete = True
 
+    def _hp_bar(self, width: int = 20) -> str:
+        """Generate a visual HP bar."""
+        if self.max_hp <= 0:
+            return "░" * width
+        ratio = max(0, min(self.current_hp / self.max_hp, 1.0))
+        filled = round(ratio * width)
+        return "█" * filled + "░" * (width - filled)
+
     def format_sheet(self) -> str:
-        """Format a full character sheet for display."""
-        sep = "─" * 40
+        """Format a full character sheet for display in Discord."""
         race_display = self.subrace if self.subrace else self.race
-        gender_str = f" ({self.gender})" if self.gender else ""
+        gender_str = f" | {self.gender}" if self.gender else ""
+        insp_icon = " ✦ Inspired" if self.inspiration else ""
+
+        # ── Header ──
         lines = [
-            f"**{self.name}**{gender_str} — Level {self.level} {race_display} {self.char_class}",
-            f"*Background: {self.background}*",
-            sep,
-            "**Ability Scores**",
+            f"╔{'═' * 42}╗",
+            f"  **⚔ {self.name}**{insp_icon}",
+            f"  Level {self.level} {race_display} {self.char_class}{gender_str}",
+            f"  *{self.background}*",
+            f"╠{'═' * 42}╣",
         ]
+
+        # ── Core Stats Bar ──
+        hp_bar = self._hp_bar(16)
+        lines.append(f"  ❤ **HP** {self.current_hp}/{self.max_hp}  `{hp_bar}`")
+        lines.append(f"  🛡 **AC** {self.ac}   ⚡ **Speed** {self.speed} ft   🎲 **Prof** +{self.proficiency_bonus}")
+        lines.append(f"  🎯 **Hit Dice** {self.hit_dice_remaining}d{self.hit_die}   ✨ **XP** {self.xp}/{xp_for_next_level(self.level)}")
+
+        if self.draconic_ancestry:
+            lines.append(f"  🐉 **Draconic Ancestry:** {self.draconic_ancestry}")
+
+        # ── Ability Scores (code block for alignment) ──
+        lines.append(f"╠{'═' * 42}╣")
+        lines.append("  **Ability Scores**  *(★ = save proficiency)*")
+        lines.append("```")
         for ab in ABILITY_NAMES:
             score = self.abilities[ab]
             mod = modifier_str(score)
             save_mod = self.get_save_modifier(ab)
             save_str = f"+{save_mod}" if save_mod >= 0 else str(save_mod)
-            prof_mark = " ★" if ab in self.saving_throw_proficiencies else ""
-            lines.append(f"  {ABILITY_FULL_NAMES[ab]:14s} {score:2d} ({mod})  Save: {save_str}{prof_mark}")
+            prof_mark = " ★" if ab in self.saving_throw_proficiencies else "  "
+            lines.append(f"  {ABILITY_FULL_NAMES[ab]:<14s} {score:2d} ({mod:>3s})  Save {save_str:>3s}{prof_mark}")
+        lines.append("```")
 
-        lines.append(sep)
-        lines.append(f"**HP:** {self.current_hp}/{self.max_hp}  |  **AC:** {self.ac}  |  **Speed:** {self.speed} ft")
-        lines.append(f"**Hit Dice:** {self.hit_dice_remaining}d{self.hit_die}  |  **Prof. Bonus:** +{self.proficiency_bonus}")
-        lines.append(f"**XP:** {self.xp}/{xp_for_next_level(self.level)}  |  **Inspiration:** {'Yes' if self.inspiration else 'No'}")
+        # ── Skills (two columns in code block) ──
+        lines.append(f"╠{'═' * 42}╣")
+        lines.append("  **Skills**  *(★ = proficient)*")
+        lines.append("```")
+        sorted_skills = sorted(SKILLS.keys())
+        mid = (len(sorted_skills) + 1) // 2
+        col1 = sorted_skills[:mid]
+        col2 = sorted_skills[mid:]
+        for i in range(mid):
+            sk1 = col1[i]
+            mod1 = self.get_skill_modifier(sk1)
+            m1 = f"+{mod1}" if mod1 >= 0 else str(mod1)
+            mark1 = "★" if sk1 in self.skill_proficiencies else " "
+            left = f"{mark1} {sk1:<16s}{m1:>3s}"
+            if i < len(col2):
+                sk2 = col2[i]
+                mod2 = self.get_skill_modifier(sk2)
+                m2 = f"+{mod2}" if mod2 >= 0 else str(mod2)
+                mark2 = "★" if sk2 in self.skill_proficiencies else " "
+                right = f"{mark2} {sk2:<16s}{m2:>3s}"
+            else:
+                right = ""
+            lines.append(f" {left}  {right}")
+        lines.append("```")
 
-        if self.draconic_ancestry:
-            lines.append(f"**Draconic Ancestry:** {self.draconic_ancestry}")
+        # ── Traits & Features ──
+        if self.traits or self.features or self.languages:
+            lines.append(f"╠{'═' * 42}╣")
+            if self.traits:
+                lines.append(f"  📜 **Traits:** {', '.join(self.traits)}")
+            if self.features:
+                lines.append(f"  ⭐ **Features:** {', '.join(self.features)}")
+            if self.languages:
+                lines.append(f"  💬 **Languages:** {', '.join(self.languages)}")
 
-        lines.append(sep)
-        lines.append("**Skills** (★ = proficient)")
-        skill_lines = []
-        for skill_name in sorted(SKILLS.keys()):
-            mod = self.get_skill_modifier(skill_name)
-            mod_s = f"+{mod}" if mod >= 0 else str(mod)
-            mark = "★" if skill_name in self.skill_proficiencies else " "
-            skill_lines.append(f"  {mark} {skill_name:18s} {mod_s}")
-        lines.extend(skill_lines)
-
-        lines.append(sep)
-        if self.traits:
-            lines.append("**Racial Traits:** " + ", ".join(self.traits))
-        if self.features:
-            lines.append("**Features:** " + ", ".join(self.features))
-        if self.languages:
-            lines.append("**Languages:** " + ", ".join(self.languages))
-
-        # Spellcasting section
+        # ── Spellcasting ──
         if self.spellcasting_ability:
-            lines.append(sep)
+            lines.append(f"╠{'═' * 42}╣")
             spell_mod = self.get_modifier(self.spellcasting_ability)
             spell_save = 8 + self.proficiency_bonus + spell_mod
             spell_atk = self.proficiency_bonus + spell_mod
-            spell_atk_str = f"+{spell_atk}" if spell_atk >= 0 else str(spell_atk)
+            atk_str = f"+{spell_atk}" if spell_atk >= 0 else str(spell_atk)
             lines.append(
-                f"**Spellcasting** ({self.spellcasting_ability})  |  "
-                f"Save DC: {spell_save}  |  Attack: {spell_atk_str}"
+                f"  🔮 **Spellcasting** ({self.spellcasting_ability})"
+                f"  |  DC **{spell_save}**  |  Atk **{atk_str}**"
             )
             if self.cantrips:
-                lines.append(f"**Cantrips:** {', '.join(self.cantrips)}")
+                lines.append(f"  **Cantrips:** {', '.join(self.cantrips)}")
             if self.spell_slots_max:
-                slot_parts = []
                 for lvl in sorted(self.spell_slots_max, key=lambda x: int(x)):
                     used = self.spell_slots_used.get(lvl, 0)
                     total = self.spell_slots_max[lvl]
                     remaining = total - used
-                    slot_parts.append(f"Lv{lvl}: {remaining}/{total}")
-                lines.append("**Spell Slots:** " + "  ".join(slot_parts))
+                    pips = "◆" * remaining + "◇" * used
+                    lines.append(f"  **Lv{lvl}:** {pips}")
             if self.prepared_spells:
-                lines.append(f"**Prepared:** {', '.join(self.prepared_spells)}")
+                lines.append(f"  📖 **Prepared:** {', '.join(self.prepared_spells)}")
             if self.known_spells:
-                lines.append(f"**Known Spells:** {', '.join(self.known_spells)}")
+                lines.append(f"  📚 **Known:** {', '.join(self.known_spells)}")
+
+        # ── Footer ──
+        lines.append(f"╚{'═' * 42}╝")
 
         return "\n".join(lines)
 
