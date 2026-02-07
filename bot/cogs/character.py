@@ -124,6 +124,10 @@ class CharacterCog(commands.Cog, name="Character"):
             await self._step_background(ctx, session, char, choice)
         elif step == "skills":
             await self._step_skills(ctx, session, char, choice)
+        elif step == "equipment":
+            await self._step_equipment(ctx, session, char, choice)
+        elif step == "backstory":
+            await self._step_backstory(ctx, session, char, choice)
         elif step == "confirm":
             await self._step_confirm(ctx, session, char, choice)
         else:
@@ -551,6 +555,92 @@ class CharacterCog(commands.Cog, name="Character"):
             if skill not in char.skill_proficiencies:
                 char.skill_proficiencies.append(skill)
 
+        # Advance to equipment selection
+        cls_data = session["class_data"]
+        equip_options = cls_data.get("starting_equipment", [])
+
+        # Separate choices (lists) from fixed items (strings)
+        choices = []
+        fixed_items = []
+        for item in equip_options:
+            if isinstance(item, list):
+                choices.append(item)
+            else:
+                fixed_items.append(item)
+
+        session["equip_choices"] = choices
+        session["equip_fixed"] = fixed_items
+        session["equip_picks"] = []
+        session["equip_index"] = 0
+        session["step"] = "equipment"
+        _set_session(ctx, session)
+
+        await self._show_equipment_choice(ctx, session, char)
+
+    async def _show_equipment_choice(self, ctx, session, char: Character):
+        """Show the current equipment choice or advance past equipment."""
+        choices = session["equip_choices"]
+        idx = session["equip_index"]
+
+        if idx >= len(choices):
+            # All choices made — assemble final equipment list
+            all_items = list(session["equip_picks"]) + list(session["equip_fixed"])
+            char.inventory = all_items
+
+            equip_display = "\n".join(f"  • {item}" for item in all_items)
+
+            session["step"] = "backstory"
+            _set_session(ctx, session)
+
+            await ctx.send(
+                f"**Starting Equipment:**\n{equip_display}\n\n"
+                f"**Step 9: Backstory** *(optional)*\n"
+                f"Write a short backstory for **{char.name}** (1-3 sentences).\n"
+                f"This helps the DM weave your character into the story.\n\n"
+                f"Reply with: `!cc <your backstory>` or `!cc skip` to skip"
+            )
+            return
+
+        current_choice = choices[idx]
+        choice_list = _format_numbered_list(current_choice)
+        choice_num = idx + 1
+        total = len(choices)
+
+        await ctx.send(
+            f"**Step 8: Starting Equipment** (choice {choice_num}/{total})\n"
+            f"Pick one:\n{choice_list}\n\n"
+            f"Reply with: `!cc <number>`"
+        )
+
+    async def _step_equipment(self, ctx, session, char: Character, choice: str):
+        choices = session["equip_choices"]
+        idx = session["equip_index"]
+
+        if idx >= len(choices):
+            # Shouldn't happen, but advance
+            await self._show_equipment_choice(ctx, session, char)
+            return
+
+        current_choice = choices[idx]
+        selected = self._resolve_choice(choice.strip(), current_choice)
+        if not selected:
+            await ctx.send(f"Pick a number (1-{len(current_choice)}) or type the item name.")
+            return
+
+        session["equip_picks"].append(selected)
+        session["equip_index"] = idx + 1
+        _set_session(ctx, session)
+
+        await self._show_equipment_choice(ctx, session, char)
+
+    async def _step_backstory(self, ctx, session, char: Character, choice: str):
+        if not choice.strip():
+            await ctx.send("Write a short backstory or `!cc skip` to skip.")
+            return
+
+        if choice.strip().lower() != "skip":
+            char.backstory = choice.strip()
+
         # Finalize character
         char.finalize()
 
@@ -558,7 +648,6 @@ class CharacterCog(commands.Cog, name="Character"):
         _set_session(ctx, session)
 
         sheet = char.format_sheet()
-        # Truncate if needed for preview
         if len(sheet) > 1800:
             sheet = sheet[:1800] + "\n..."
 
@@ -589,6 +678,109 @@ class CharacterCog(commands.Cog, name="Character"):
             await ctx.send("Character creation cancelled. Use `!createchar` to start over.")
         else:
             await ctx.send("Reply `!cc yes` to confirm or `!cc no` to start over.")
+
+    @commands.command(name="equipment", aliases=["inv", "inventory"])
+    async def equipment(self, ctx: commands.Context, *, action: str = ""):
+        """View or manage your equipment/inventory.
+
+        Usage: !equipment (view your gear)
+        Usage: !equipment add Rope (50 ft)
+        Usage: !equipment remove Rope (50 ft)
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        if not action:
+            if not char.inventory:
+                await ctx.send(f"**{char.name}** has no equipment. Use `!equipment add <item>` to add items.")
+                return
+            lines = [f"**{char.name}'s Equipment:**"]
+            for i, item in enumerate(char.inventory, 1):
+                lines.append(f"  `{i}.` {item}")
+            await ctx.send("\n".join(lines))
+            return
+
+        parts = action.split(None, 1)
+        sub = parts[0].lower()
+
+        if sub == "add" and len(parts) > 1:
+            item_name = parts[1].strip()
+            char.inventory.append(item_name)
+            save_campaign(campaign)
+            await ctx.send(f"**{char.name}** added **{item_name}** to inventory.")
+
+        elif sub == "remove" and len(parts) > 1:
+            target = parts[1].strip()
+            # Try as number first
+            if target.isdigit():
+                idx = int(target) - 1
+                if 0 <= idx < len(char.inventory):
+                    removed = char.inventory.pop(idx)
+                    save_campaign(campaign)
+                    await ctx.send(f"**{char.name}** removed **{removed}** from inventory.")
+                else:
+                    await ctx.send(f"Invalid item number. Use 1-{len(char.inventory)}.")
+            else:
+                # Try by name (case-insensitive)
+                target_lower = target.lower()
+                for i, item in enumerate(char.inventory):
+                    if item.lower() == target_lower:
+                        char.inventory.pop(i)
+                        save_campaign(campaign)
+                        await ctx.send(f"**{char.name}** removed **{item}** from inventory.")
+                        return
+                await ctx.send(f"Item **{target}** not found in inventory.")
+        else:
+            await ctx.send("Usage: `!equipment`, `!equipment add <item>`, `!equipment remove <item or #>`")
+
+    @commands.command(name="backstory")
+    async def backstory(self, ctx: commands.Context, *, text: str = ""):
+        """View or set your character's backstory.
+
+        Usage: !backstory (view your backstory)
+        Usage: !backstory <text> (set/update your backstory)
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        # Allow viewing other players' backstories
+        target_id = str(ctx.author.id)
+        if ctx.message.mentions:
+            target_id = str(ctx.message.mentions[0].id)
+            text = ""  # Viewing, not setting
+
+        char = campaign.get_character(target_id)
+        if not char:
+            await ctx.send("No character found.")
+            return
+
+        if not text:
+            if not char.backstory:
+                if target_id == str(ctx.author.id):
+                    await ctx.send(f"**{char.name}** has no backstory yet. Use `!backstory <text>` to write one.")
+                else:
+                    await ctx.send(f"**{char.name}** has no backstory yet.")
+                return
+            await ctx.send(f"**{char.name}'s Backstory:**\n> {char.backstory}")
+            return
+
+        # Setting backstory (only for your own character)
+        if target_id != str(ctx.author.id):
+            await ctx.send("You can only set your own backstory.")
+            return
+
+        char.backstory = text.strip()
+        save_campaign(campaign)
+        await ctx.send(f"**{char.name}'s** backstory updated!\n> {char.backstory}")
 
     @commands.command(name="deletechar")
     async def delete_char(self, ctx: commands.Context):

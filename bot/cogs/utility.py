@@ -225,7 +225,11 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!cc <choice>` — Make a creation choice (name, gender, race, etc.)\n"
                 "`!deletechar` — Delete your character and start over\n"
                 "`!sheet` — View your full character sheet\n"
-                "`!sheet @player` — View another player's sheet"
+                "`!sheet @player` — View another player's sheet\n"
+                "`!equipment` — View your inventory/gear\n"
+                "`!equipment add/remove <item>` — Manage inventory\n"
+                "`!backstory` — View your backstory\n"
+                "`!backstory <text>` — Set/update your backstory"
             ),
         },
         "gameplay": {
@@ -257,7 +261,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         },
         "combat": {
             "title": "Combat",
-            "description": "Initiative tracking and turn order management.",
+            "description": "Initiative tracking, turn order, and tactical map.",
             "commands": (
                 "`!combatstart` — *(DM)* Begin a combat encounter\n"
                 "`!initiative` — Roll initiative (d20 + DEX mod)\n"
@@ -267,6 +271,11 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!turnorder` — Display the current initiative order\n"
                 "`!next` — *(DM)* Advance to the next turn\n"
                 "`!pass` — Skip your combat turn\n"
+                "`!map` — Display the combat map\n"
+                "`!place <name> <x> <y>` — *(DM)* Place a token on the map\n"
+                "`!move <dir> <dist>` — Move on the map (n/s/e/w/ne/nw/se/sw)\n"
+                "`!move <x> <y>` — Move to absolute coordinates\n"
+                "`!mapsize <w> <h>` — *(DM)* Resize the map (5-20)\n"
                 "`!combatend` — *(DM)* End combat"
             ),
         },
@@ -324,10 +333,10 @@ class UtilityCog(commands.Cog, name="Utility"):
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
         "camp": "campaign", "campaigns": "campaign",
-        "char": "character", "characters": "character", "sheet": "character",
+        "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice",
-        "fight": "combat", "initiative": "combat", "battle": "combat",
+        "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
         "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",

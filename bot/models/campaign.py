@@ -11,6 +11,104 @@ class CampaignPhase(str, Enum):
     ACTIVE = "active"        # Campaign in progress
 
 
+class CombatMap:
+    """Simple grid-based combat map for ASCII display."""
+
+    DEFAULT_WIDTH = 12
+    DEFAULT_HEIGHT = 10
+
+    def __init__(self, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT):
+        self.width = width
+        self.height = height
+        self.positions: dict[str, list[int]] = {}  # name -> [x, y]
+        self.tokens: dict[str, str] = {}  # name -> display char (1-2 chars)
+        self.terrain: dict[str, str] = {}  # "x,y" -> char (e.g. "#" for wall)
+
+    def place(self, name: str, x: int, y: int, token: str = ""):
+        """Place or move a token on the map."""
+        x = max(0, min(x, self.width - 1))
+        y = max(0, min(y, self.height - 1))
+        self.positions[name] = [x, y]
+        if token:
+            self.tokens[name] = token[:2]
+        elif name not in self.tokens:
+            self.tokens[name] = name[:2].upper()
+
+    def remove(self, name: str):
+        self.positions.pop(name, None)
+        self.tokens.pop(name, None)
+
+    def move(self, name: str, dx: int, dy: int) -> bool:
+        """Move a token by relative offset. Returns True if moved."""
+        if name not in self.positions:
+            return False
+        pos = self.positions[name]
+        new_x = max(0, min(pos[0] + dx, self.width - 1))
+        new_y = max(0, min(pos[1] + dy, self.height - 1))
+        self.positions[name] = [new_x, new_y]
+        return True
+
+    def render(self) -> str:
+        """Render the map as ASCII art in a code block."""
+        # Build position lookup: (x, y) -> token
+        occupied: dict[tuple[int, int], str] = {}
+        for name, pos in self.positions.items():
+            key = (pos[0], pos[1])
+            occupied[key] = self.tokens.get(name, name[:2].upper())
+
+        # Column headers
+        col_header = "   " + "".join(f"{i:3d}" for i in range(self.width))
+        lines = [col_header]
+        lines.append("   " + "┌" + "──┬" * (self.width - 1) + "──┐")
+
+        for y in range(self.height):
+            row = f"{y:2d} │"
+            for x in range(self.width):
+                terrain_key = f"{x},{y}"
+                if (x, y) in occupied:
+                    tk = occupied[(x, y)]
+                    row += f"{tk:>2}│"
+                elif terrain_key in self.terrain:
+                    ch = self.terrain[terrain_key]
+                    row += f"{ch:>2}│"
+                else:
+                    row += "  │"
+            lines.append(row)
+            if y < self.height - 1:
+                lines.append("   " + "├" + "──┼" * (self.width - 1) + "──┤")
+
+        lines.append("   " + "└" + "──┴" * (self.width - 1) + "──┘")
+
+        # Legend
+        if self.positions:
+            lines.append("")
+            legend_items = []
+            for name in sorted(self.positions.keys()):
+                tk = self.tokens.get(name, name[:2].upper())
+                pos = self.positions[name]
+                legend_items.append(f"{tk}={name} ({pos[0]},{pos[1]})")
+            lines.append("Legend: " + "  ".join(legend_items))
+
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        return {
+            "width": self.width,
+            "height": self.height,
+            "positions": self.positions,
+            "tokens": self.tokens,
+            "terrain": self.terrain,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CombatMap":
+        m = cls(data.get("width", cls.DEFAULT_WIDTH), data.get("height", cls.DEFAULT_HEIGHT))
+        m.positions = data.get("positions", {})
+        m.tokens = data.get("tokens", {})
+        m.terrain = data.get("terrain", {})
+        return m
+
+
 class CombatState:
     """Tracks combat encounter state."""
 
@@ -19,6 +117,7 @@ class CombatState:
         self.initiative_order = []  # List of {"name": str, "roll": int, "player_id": str|None}
         self.current_turn_index = 0
         self.round_number = 1
+        self.combat_map = CombatMap()
 
     @property
     def current_turn(self):
@@ -38,6 +137,7 @@ class CombatState:
             "initiative_order": self.initiative_order,
             "current_turn_index": self.current_turn_index,
             "round_number": self.round_number,
+            "combat_map": self.combat_map.to_dict(),
         }
 
     @classmethod
@@ -47,6 +147,8 @@ class CombatState:
         cs.initiative_order = data.get("initiative_order", [])
         cs.current_turn_index = data.get("current_turn_index", 0)
         cs.round_number = data.get("round_number", 1)
+        if "combat_map" in data:
+            cs.combat_map = CombatMap.from_dict(data["combat_map"])
         return cs
 
 
@@ -86,7 +188,7 @@ class Campaign:
             return "No characters created yet."
         lines = []
         for char in self.characters.values():
-            lines.append(f"- {char.short_summary()}")
+            lines.append(f"- {char.full_context()}")
         return "\n".join(lines)
 
     def add_to_history(self, role: str, content: str):

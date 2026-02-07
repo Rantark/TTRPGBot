@@ -11,6 +11,11 @@ CLASSES = {
         "num_skills": 2,
         "starting_hp": 12,
         "description": "A fierce warrior who channels primal rage to devastate foes.",
+        "starting_equipment": [
+            ["Greataxe", "Any martial weapon"],
+            ["Two handaxes", "Any simple weapon"],
+            "Explorer's pack", "4 javelins",
+        ],
     },
     "Bard": {
         "hit_die": 8,
@@ -26,6 +31,12 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "CHA",
         "description": "A master of song, speech, and magic that inspires allies.",
+        "starting_equipment": [
+            ["Rapier", "Longsword", "Any simple weapon"],
+            ["Diplomat's pack", "Entertainer's pack"],
+            ["Lute", "Any musical instrument"],
+            "Leather armor", "Dagger",
+        ],
     },
     "Cleric": {
         "hit_die": 8,
@@ -39,6 +50,13 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "WIS",
         "description": "A divine champion who wields the power of their deity.",
+        "starting_equipment": [
+            ["Mace", "Warhammer (if proficient)"],
+            ["Scale mail", "Leather armor", "Chain mail (if proficient)"],
+            ["Light crossbow & 20 bolts", "Any simple weapon"],
+            ["Priest's pack", "Explorer's pack"],
+            "Shield", "Holy symbol",
+        ],
     },
     "Druid": {
         "hit_die": 8,
@@ -53,6 +71,11 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "WIS",
         "description": "A guardian of nature who draws upon primal magic and wild shapes.",
+        "starting_equipment": [
+            ["Wooden shield", "Any simple weapon"],
+            ["Scimitar", "Any simple melee weapon"],
+            "Leather armor", "Explorer's pack", "Druidic focus",
+        ],
     },
     "Fighter": {
         "hit_die": 10,
@@ -64,6 +87,12 @@ CLASSES = {
         "num_skills": 2,
         "starting_hp": 10,
         "description": "A master of martial combat, skilled with a variety of weapons and armor.",
+        "starting_equipment": [
+            ["Chain mail", "Leather armor, longbow & 20 arrows"],
+            ["A martial weapon & shield", "Two martial weapons"],
+            ["Light crossbow & 20 bolts", "Two handaxes"],
+            ["Dungeoneer's pack", "Explorer's pack"],
+        ],
     },
     "Monk": {
         "hit_die": 8,
@@ -75,6 +104,11 @@ CLASSES = {
         "num_skills": 2,
         "starting_hp": 8,
         "description": "A martial artist harnessing the power of the body in pursuit of perfection.",
+        "starting_equipment": [
+            ["Shortsword", "Any simple weapon"],
+            ["Dungeoneer's pack", "Explorer's pack"],
+            "10 darts",
+        ],
     },
     "Paladin": {
         "hit_die": 10,
@@ -88,6 +122,12 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "CHA",
         "description": "A holy warrior bound to a sacred oath.",
+        "starting_equipment": [
+            ["A martial weapon & shield", "Two martial weapons"],
+            ["5 javelins", "Any simple melee weapon"],
+            ["Priest's pack", "Explorer's pack"],
+            "Chain mail", "Holy symbol",
+        ],
     },
     "Ranger": {
         "hit_die": 10,
@@ -101,6 +141,12 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "WIS",
         "description": "A warrior of the wilderness, skilled in tracking and nature magic.",
+        "starting_equipment": [
+            ["Scale mail", "Leather armor"],
+            ["Two shortswords", "Two simple melee weapons"],
+            ["Dungeoneer's pack", "Explorer's pack"],
+            "Longbow", "Quiver of 20 arrows",
+        ],
     },
     "Rogue": {
         "hit_die": 8,
@@ -114,6 +160,12 @@ CLASSES = {
         "num_skills": 4,
         "starting_hp": 8,
         "description": "A scoundrel who uses stealth and trickery to overcome obstacles.",
+        "starting_equipment": [
+            ["Rapier", "Shortsword"],
+            ["Shortbow & quiver of 20 arrows", "Shortsword"],
+            ["Burglar's pack", "Dungeoneer's pack", "Explorer's pack"],
+            "Leather armor", "Two daggers", "Thieves' tools",
+        ],
     },
     "Sorcerer": {
         "hit_die": 6,
@@ -127,6 +179,12 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "CHA",
         "description": "A spellcaster who draws on inherent magic from a gift or bloodline.",
+        "starting_equipment": [
+            ["Light crossbow & 20 bolts", "Any simple weapon"],
+            ["Component pouch", "Arcane focus"],
+            ["Dungeoneer's pack", "Explorer's pack"],
+            "Two daggers",
+        ],
     },
     "Warlock": {
         "hit_die": 8,
@@ -140,6 +198,12 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "CHA",
         "description": "A wielder of magic derived from a bargain with an extraplanar entity.",
+        "starting_equipment": [
+            ["Light crossbow & 20 bolts", "Any simple weapon"],
+            ["Component pouch", "Arcane focus"],
+            ["Scholar's pack", "Dungeoneer's pack"],
+            "Leather armor", "Any simple weapon", "Two daggers",
+        ],
     },
     "Wizard": {
         "hit_die": 6,
@@ -153,6 +217,12 @@ CLASSES = {
         "spellcaster": True,
         "spellcasting_ability": "INT",
         "description": "A scholarly magic-user who commands arcane spells through study and practice.",
+        "starting_equipment": [
+            ["Quarterstaff", "Dagger"],
+            ["Component pouch", "Arcane focus"],
+            ["Scholar's pack", "Explorer's pack"],
+            "Spellbook",
+        ],
     },
 }
 

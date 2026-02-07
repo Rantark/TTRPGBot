@@ -43,6 +43,7 @@ class Character:
         self.inspiration = False
         self.death_saves = {"successes": 0, "failures": 0}
         self.feats = []               # List of feat names
+        self.backstory = ""           # Short character backstory
         self.conditions = []
         self.notes = ""
         # Dragonborn ancestry
@@ -259,6 +260,7 @@ class Character:
             "features": self.features,
             "inventory": self.inventory,
             "feats": self.feats,
+            "backstory": self.backstory,
             "inspiration": self.inspiration,
             "death_saves": self.death_saves,
             "conditions": self.conditions,
@@ -286,5 +288,21 @@ class Character:
         """One-line character summary for DM context."""
         race_display = self.subrace if self.subrace else self.race
         gender_str = f", {self.gender}" if self.gender else ""
-        return (f"{self.name} (Level {self.level} {race_display} {self.char_class}{gender_str}, "
-                f"HP {self.current_hp}/{self.max_hp}, AC {self.ac})")
+        summary = (f"{self.name} (Level {self.level} {race_display} {self.char_class}{gender_str}, "
+                   f"HP {self.current_hp}/{self.max_hp}, AC {self.ac})")
+        if self.inventory:
+            summary += f" Equipment: {', '.join(self.inventory[:8])}"
+            if len(self.inventory) > 8:
+                summary += f" (+{len(self.inventory) - 8} more)"
+        return summary
+
+    def full_context(self) -> str:
+        """Full character context for the DM, including backstory and equipment."""
+        lines = [self.short_summary()]
+        if self.backstory:
+            lines.append(f"  Backstory: {self.backstory}")
+        if self.feats:
+            lines.append(f"  Feats: {', '.join(self.feats)}")
+        if self.known_spells:
+            lines.append(f"  Known Spells: {', '.join(self.known_spells)}")
+        return "\n".join(lines)
