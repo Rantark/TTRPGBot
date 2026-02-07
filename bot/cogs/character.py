@@ -16,24 +16,22 @@ from bot.dice import roll_ability_scores
 from bot.storage import load_campaign, save_campaign
 
 
-# Track creation state per user (channel_id:user_id -> state dict)
+# Track creation state per user (user_id -> state dict)
+# Each user can only have one creation session at a time.
+# Session stores origin_channel_id so we know which campaign to save to.
 _creation_sessions: dict[str, dict] = {}
 
 
-def _session_key(channel_id, user_id) -> str:
-    return f"{channel_id}:{user_id}"
+def _get_session(user_id) -> dict | None:
+    return _creation_sessions.get(str(user_id))
 
 
-def _get_session(ctx: commands.Context) -> dict | None:
-    return _creation_sessions.get(_session_key(ctx.channel.id, ctx.author.id))
+def _set_session(user_id, session: dict):
+    _creation_sessions[str(user_id)] = session
 
 
-def _set_session(ctx: commands.Context, session: dict):
-    _creation_sessions[_session_key(ctx.channel.id, ctx.author.id)] = session
-
-
-def _clear_session(ctx: commands.Context):
-    _creation_sessions.pop(_session_key(ctx.channel.id, ctx.author.id), None)
+def _clear_session(user_id):
+    _creation_sessions.pop(str(user_id), None)
 
 
 def _format_numbered_list(items: list[str], columns: int = 2) -> str:
@@ -55,8 +53,9 @@ class CharacterCog(commands.Cog, name="Character"):
         return load_campaign(str(ctx.channel.id))
 
     @commands.command(name="createchar")
+    @commands.guild_only()
     async def create_char(self, ctx: commands.Context):
-        """Start interactive character creation.
+        """Start interactive character creation (sent to your DMs for privacy).
 
         Usage: !createchar
         """
@@ -75,28 +74,43 @@ class CharacterCog(commands.Cog, name="Character"):
                            "Use `!deletechar` to delete it first.")
             return
 
-        # Start creation session
+        # Start creation session — store origin channel for campaign lookup
         char = Character(player_id, ctx.author.display_name)
-        session = {"step": "name", "char": char}
-        _set_session(ctx, session)
+        session = {
+            "step": "name",
+            "char": char,
+            "channel_id": str(ctx.channel.id),
+            "guild_id": ctx.guild.id,
+        }
+        _set_session(ctx.author.id, session)
 
-        await ctx.send(
-            "**Character Creation**\n"
-            "Let's build your character step by step.\n\n"
-            "**Step 1: Name**\n"
-            "What is your character's name?\n"
-            "Reply with: `!cc <name>`"
-        )
+        try:
+            await ctx.author.send(
+                "**Character Creation**\n"
+                "Let's build your character step by step.\n\n"
+                "**Step 1: Name**\n"
+                "What is your character's name?\n"
+                "Reply with: `!cc <name>`"
+            )
+            await ctx.send(f"{ctx.author.mention} Check your DMs — character creation has started there!")
+        except discord.Forbidden:
+            _clear_session(ctx.author.id)
+            await ctx.send("I can't DM you! Please enable DMs from server members and try again.")
 
     @commands.command(name="cc")
     async def creation_choice(self, ctx: commands.Context, *, choice: str = ""):
-        """Make a choice during character creation.
+        """Make a choice during character creation (use in DMs).
 
         Usage: !cc <your choice>
         """
-        session = _get_session(ctx)
+        session = _get_session(ctx.author.id)
         if not session:
-            await ctx.send("No character creation in progress. Use `!createchar` to start.")
+            await ctx.send("No character creation in progress. Use `!createchar` in a server channel to start.")
+            return
+
+        # If used in a guild channel, redirect to DMs
+        if ctx.guild is not None:
+            await ctx.send(f"{ctx.author.mention} Character creation happens in DMs! Check your DMs and use `!cc` there.")
             return
 
         step = session["step"]
@@ -139,7 +153,7 @@ class CharacterCog(commands.Cog, name="Character"):
             return
         char.name = choice.strip()
         session["step"] = "gender"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         await ctx.send(
             f"Great, **{char.name}**!\n\n"
@@ -160,7 +174,7 @@ class CharacterCog(commands.Cog, name="Character"):
         char.gender = presets.get(choice.strip(), choice.strip())
 
         session["step"] = "race"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         races = get_race_names()
         race_list = _format_numbered_list(races)
@@ -193,7 +207,7 @@ class CharacterCog(commands.Cog, name="Character"):
         # Dragonborn needs ancestry choice
         if char.race == "Dragonborn":
             session["step"] = "draconic_ancestry"
-            _set_session(ctx, session)
+            _set_session(ctx.author.id, session)
             ancestry_list = _format_numbered_list(list(DRACONIC_ANCESTRIES.keys()))
             await ctx.send(
                 f"**Dragonborn Ancestry**\n"
@@ -207,7 +221,7 @@ class CharacterCog(commands.Cog, name="Character"):
         if char.race == "Half-Elf":
             session["step"] = "half_elf_bonus"
             session["half_elf_picks"] = []
-            _set_session(ctx, session)
+            _set_session(ctx.author.id, session)
             abilities = [a for a in ABILITY_NAMES if a != "CHA"]
             ab_list = _format_numbered_list(abilities)
             await ctx.send(
@@ -272,7 +286,7 @@ class CharacterCog(commands.Cog, name="Character"):
             msg += f" (+{len(char.traits) - 5} more)"
 
         session["step"] = "class"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         classes = get_class_names()
         class_list = []
@@ -307,7 +321,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         session["class_data"] = cls_data
         session["step"] = "ability_method"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         await ctx.send(
             f"**Class: {cls_name}** (d{cls_data['hit_die']})\n"
@@ -342,7 +356,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
             session["rolled_scores"] = scores
             session["step"] = "ability_assign"
-            _set_session(ctx, session)
+            _set_session(ctx.author.id, session)
 
             detail_str = "\n".join(f"  Roll {i+1}: {d}" for i, d in enumerate(details))
             await ctx.send(
@@ -356,7 +370,7 @@ class CharacterCog(commands.Cog, name="Character"):
         elif choice in ("2", "standard", "array"):
             session["rolled_scores"] = list(STANDARD_ARRAY)
             session["step"] = "ability_assign"
-            _set_session(ctx, session)
+            _set_session(ctx.author.id, session)
 
             await ctx.send(
                 f"**Standard Array:** {STANDARD_ARRAY}\n\n"
@@ -369,7 +383,7 @@ class CharacterCog(commands.Cog, name="Character"):
             session["point_buy_scores"] = {a: 8 for a in ABILITY_NAMES}
             session["point_buy_remaining"] = POINT_BUY_BUDGET
             session["step"] = "point_buy"
-            _set_session(ctx, session)
+            _set_session(ctx.author.id, session)
 
             await self._show_point_buy(ctx, session)
 
@@ -461,7 +475,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         session["point_buy_remaining"] += old_cost - new_cost
         session["point_buy_scores"][ab] = new_score
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         await self._show_point_buy(ctx, session)
 
@@ -474,7 +488,7 @@ class CharacterCog(commands.Cog, name="Character"):
             lines.append(f"  {ABILITY_FULL_NAMES[ab]:14s} **{score}** ({modifier_str(score)}){bonus_str}")
 
         session["step"] = "background"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         backgrounds = get_background_names()
         bg_list = _format_numbered_list(backgrounds)
@@ -516,7 +530,7 @@ class CharacterCog(commands.Cog, name="Character"):
         session["available_skills"] = available_skills
         session["num_skills"] = num_skills
         session["step"] = "skills"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         skill_list = _format_numbered_list(available_skills)
         already = ", ".join(char.skill_proficiencies) if char.skill_proficiencies else "None"
@@ -573,7 +587,7 @@ class CharacterCog(commands.Cog, name="Character"):
         session["equip_picks"] = []
         session["equip_index"] = 0
         session["step"] = "equipment"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         await self._show_equipment_choice(ctx, session, char)
 
@@ -590,7 +604,7 @@ class CharacterCog(commands.Cog, name="Character"):
             equip_display = "\n".join(f"  • {item}" for item in all_items)
 
             session["step"] = "backstory"
-            _set_session(ctx, session)
+            _set_session(ctx.author.id, session)
 
             await ctx.send(
                 f"**Starting Equipment:**\n{equip_display}\n\n"
@@ -629,7 +643,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         session["equip_picks"].append(selected)
         session["equip_index"] = idx + 1
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         await self._show_equipment_choice(ctx, session, char)
 
@@ -645,7 +659,7 @@ class CharacterCog(commands.Cog, name="Character"):
         char.finalize()
 
         session["step"] = "confirm"
-        _set_session(ctx, session)
+        _set_session(ctx.author.id, session)
 
         sheet = char.format_sheet()
         if len(sheet) > 1800:
@@ -659,23 +673,37 @@ class CharacterCog(commands.Cog, name="Character"):
     async def _step_confirm(self, ctx, session, char: Character, choice: str):
         choice = choice.strip().lower()
         if choice in ("yes", "y", "confirm"):
-            campaign = self._get_campaign(ctx)
+            # Load campaign from the original guild channel
+            channel_id = session.get("channel_id", str(ctx.channel.id))
+            campaign = load_campaign(channel_id)
             if not campaign:
                 await ctx.send("Campaign not found. Something went wrong.")
-                _clear_session(ctx)
+                _clear_session(ctx.author.id)
                 return
 
             campaign.add_character(str(ctx.author.id), char)
             save_campaign(campaign)
-            _clear_session(ctx)
+            _clear_session(ctx.author.id)
 
             await ctx.send(
                 f"**{char.name}** has been created and saved!\n"
-                f"Use `!sheet` to view your character sheet anytime."
+                f"Use `!sheet` in the server channel to view your character sheet."
             )
+
+            # Announce in the original guild channel
+            try:
+                guild_channel = self.bot.get_channel(int(channel_id))
+                if guild_channel:
+                    await guild_channel.send(
+                        f"**{char.name}** ({char.race} {char.char_class}) has joined the party! "
+                        f"Created by {ctx.author.mention}."
+                    )
+            except Exception:
+                pass  # Don't fail if announcement doesn't work
+
         elif choice in ("no", "n", "restart"):
-            _clear_session(ctx)
-            await ctx.send("Character creation cancelled. Use `!createchar` to start over.")
+            _clear_session(ctx.author.id)
+            await ctx.send("Character creation cancelled. Use `!createchar` in a server channel to start over.")
         else:
             await ctx.send("Reply `!cc yes` to confirm or `!cc no` to start over.")
 
@@ -792,7 +820,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         player_id = str(ctx.author.id)
         char = campaign.get_character(player_id)
-        _clear_session(ctx)
+        _clear_session(ctx.author.id)
 
         if not char:
             await ctx.send("You don't have a character to delete.")

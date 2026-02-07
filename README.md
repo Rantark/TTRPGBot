@@ -39,7 +39,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 ## Features at a Glance
 
 - **AI Dungeon Master** — Claude narrates the story, roleplays NPCs, manages encounters, and adjudicates rules
-- **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, backstory
+- **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, backstory. **Private DM-based flow** so multiple players can create simultaneously
 - **Campaign System** — Pitch/vote on concepts, setup phase for character creation, DM-controlled start
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
 - **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
@@ -206,7 +206,7 @@ DM:     !selectpitch 1
 
 ### Phase 2: Character Creation
 
-Each player runs `!createchar` and follows the interactive prompts (name, gender, race, class, ability scores, background, skills). See [Character Creation Walkthrough](#character-creation-walkthrough) below.
+Each player runs `!createchar` in the server channel. The bot sends them a **DM** with the interactive creation prompts — keeping the process private so multiple players can create characters simultaneously without spoilers. See [Character Creation Walkthrough](#character-creation-walkthrough) below.
 
 ### Phase 3: Adventure Begins
 
@@ -259,8 +259,8 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 
 | Command | Description |
 |---|---|
-| `!createchar` | Start interactive step-by-step character creation |
-| `!cc <choice>` | Make a choice during creation (name, gender, race, class, etc.) |
+| `!createchar` | Start character creation (sent to your DMs for privacy) |
+| `!cc <choice>` | Make a choice during creation (use in DMs) |
 | `!deletechar` | Delete your character and start over |
 | `!sheet` | View your full character sheet |
 | `!sheet @player` | View another player's character sheet |
@@ -373,7 +373,7 @@ Spell slots are tracked per D&D 5e rules: full casters (Bard, Cleric, Druid, Sor
 
 ## Character Creation Walkthrough
 
-When a player types `!createchar`, the bot walks them through 9 steps:
+When a player types `!createchar` in the server channel, the bot sends them a **private DM** to walk through 9 steps. This keeps character choices secret from other players and allows multiple players to create characters at the same time. All `!cc` responses happen in DMs — only the final "character joined the party" announcement appears in the server channel.
 
 ### Step 1: Name
 
