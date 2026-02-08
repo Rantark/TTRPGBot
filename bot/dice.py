@@ -25,10 +25,11 @@ def roll_ability_scores() -> list[tuple[int, list[int]]]:
     return [roll_4d6_drop_lowest() for _ in range(6)]
 
 
-def parse_and_roll(notation: str) -> dict:
+def parse_and_roll(notation: str, advantage: bool = False, disadvantage: bool = False) -> dict:
     """Parse dice notation like '2d6+3', 'd20', '4d6-1', 'd20+5' and roll.
 
     Returns dict with keys: notation, rolls, modifier, total, breakdown.
+    If advantage/disadvantage, rolls twice and takes higher/lower.
     """
     notation = notation.strip().lower().replace(" ", "")
     pattern = r"^(\d*)d(\d+)([+-]\d+)?$"
@@ -48,7 +49,44 @@ def parse_and_roll(notation: str) -> dict:
     rolls = roll_dice(count, sides)
     total = sum(rolls) + mod
 
-    # Build breakdown string
+    if (advantage or disadvantage) and not (advantage and disadvantage):
+        rolls2 = roll_dice(count, sides)
+        total2 = sum(rolls2) + mod
+
+        r1_str = " + ".join(str(r) for r in rolls)
+        r2_str = " + ".join(str(r) for r in rolls2)
+        r1_display = f"[{r1_str}]" if count > 1 else f"[{rolls[0]}]"
+        r2_display = f"[{r2_str}]" if count > 1 else f"[{rolls2[0]}]"
+
+        if advantage:
+            chosen = max(total, total2)
+            label = "Advantage"
+        else:
+            chosen = min(total, total2)
+            label = "Disadvantage"
+
+        mod_str = ""
+        if mod > 0:
+            mod_str = f" + {mod}"
+        elif mod < 0:
+            mod_str = f" - {abs(mod)}"
+
+        breakdown = f"**{label}:** {r1_display}{mod_str} = {total}, {r2_display}{mod_str} = {total2} -> **{chosen}**"
+
+        return {
+            "notation": notation,
+            "rolls": rolls,
+            "rolls2": rolls2,
+            "modifier": mod,
+            "total": chosen,
+            "breakdown": breakdown,
+            "count": count,
+            "sides": sides,
+            "advantage": advantage,
+            "disadvantage": disadvantage,
+        }
+
+    # Normal roll (no adv/dis)
     rolls_str = " + ".join(str(r) for r in rolls)
     if count > 1:
         breakdown = f"[{rolls_str}]"
@@ -73,8 +111,21 @@ def parse_and_roll(notation: str) -> dict:
     }
 
 
-def roll_initiative(dex_modifier: int) -> dict:
-    """Roll initiative: 1d20 + DEX modifier."""
+def roll_initiative(dex_modifier: int, advantage: bool = False, disadvantage: bool = False) -> dict:
+    """Roll initiative: 1d20 + DEX modifier, with optional advantage/disadvantage."""
+    if (advantage or disadvantage) and not (advantage and disadvantage):
+        r1, r2 = roll_die(20), roll_die(20)
+        if advantage:
+            roll = max(r1, r2)
+            label = "advantage"
+        else:
+            roll = min(r1, r2)
+            label = "disadvantage"
+        total = roll + dex_modifier
+        mod_str = f"+{dex_modifier}" if dex_modifier >= 0 else str(dex_modifier)
+        breakdown = f"[{r1}, {r2}] ({label}, took {roll}) {mod_str} = **{total}**"
+        return {"roll": roll, "modifier": dex_modifier, "total": total, "breakdown": breakdown}
+
     roll = roll_die(20)
     total = roll + dex_modifier
     mod_str = f"+{dex_modifier}" if dex_modifier >= 0 else str(dex_modifier)
@@ -110,3 +161,23 @@ def roll_check(ability_modifier: int, proficiency: int = 0, advantage: bool = Fa
         "natural_20": roll == 20,
         "natural_1": roll == 1,
     }
+
+
+def parse_adv_dis(text: str) -> tuple[str, bool, bool]:
+    """Parse advantage/disadvantage keywords from a string.
+
+    Returns (cleaned_text, advantage, disadvantage).
+    """
+    advantage = False
+    disadvantage = False
+    lower = text.lower()
+
+    # Check for disadvantage first (contains 'adv' substring)
+    if ' disadvantage' in lower or lower.startswith('disadvantage') or ' dis ' in f' {lower} ' or lower.endswith(' dis') or lower.startswith('dis ') or lower == 'dis':
+        disadvantage = True
+        text = re.sub(r'\b(?:disadvantage|dis)\b', '', text, flags=re.IGNORECASE).strip()
+    elif ' advantage' in lower or lower.startswith('advantage') or ' adv ' in f' {lower} ' or lower.endswith(' adv') or lower.startswith('adv ') or lower == 'adv':
+        advantage = True
+        text = re.sub(r'\b(?:advantage|adv)\b', '', text, flags=re.IGNORECASE).strip()
+
+    return text, advantage, disadvantage

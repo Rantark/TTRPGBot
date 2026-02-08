@@ -227,6 +227,11 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!deletechar` — Delete your character and start over\n"
                 "`!sheet` — View your full character sheet\n"
                 "`!sheet @player` — View another player's sheet\n"
+                "`!ac` — View your AC breakdown\n"
+                "`!stats` — View your ability scores and modifiers\n"
+                "`!skills` — View all skill modifiers\n"
+                "`!saves` — View saving throw modifiers\n"
+                "`!weapons` — View your weapons and attack bonuses\n"
                 "`!equipment` — View your inventory/gear\n"
                 "`!equipment add/remove <item>` — Manage inventory\n"
                 "`!backstory` — View your backstory\n"
@@ -244,6 +249,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!inspect <target>` — Examine something closely *(queued)*\n"
                 "`!talk <NPC>` — Speak to an NPC *(queued)*\n"
                 "`!pass` — Do nothing this round\n"
+                "`!undo` — Cancel your pending action before the round resolves\n"
                 "`!pending` — See who hasn't acted yet\n"
                 "`!resolve` — *(DM)* Force the round to resolve now\n"
                 "`!dm <prompt>` — *(DM)* Narrate a scene or event\n"
@@ -256,10 +262,10 @@ class UtilityCog(commands.Cog, name="Utility"):
             "title": "Dice & Rolls",
             "description": "Roll dice and make checks using your character's stats.",
             "commands": (
-                "`!roll <notation>` — Roll dice (d20, 2d6+3, 4d6, etc.)\n"
-                "`!check <skill/ability>` — Ability or skill check\n"
-                "`!save <ability>` — Saving throw (STR, DEX, CON, INT, WIS, CHA)\n"
-                "`!attack` — Attack roll (d20 + mod + proficiency)"
+                "`!roll <notation> [adv|dis]` — Roll dice (d20, 2d6+3, etc.)\n"
+                "`!check <skill/ability> [adv|dis]` — Ability or skill check\n"
+                "`!save <ability> [adv|dis]` — Saving throw (STR, DEX, CON, INT, WIS, CHA)\n"
+                "`!attack [adv|dis]` — Attack roll (d20 + mod + proficiency)"
             ),
         },
         "combat": {
@@ -267,7 +273,7 @@ class UtilityCog(commands.Cog, name="Utility"):
             "description": "Initiative tracking, turn order, and tactical map.",
             "commands": (
                 "`!combatstart` — *(DM)* Begin a combat encounter\n"
-                "`!initiative` — Roll initiative (d20 + DEX mod)\n"
+                "`!initiative [adv|dis]` — Roll initiative (d20 + DEX mod)\n"
                 "`!addnpc <name> <init>` — *(DM)* Add NPC to initiative\n"
                 "`!removenpc <name>` — *(DM)* Remove NPC from initiative\n"
                 "`!begincombat` — *(DM)* Sort initiative and start turns\n"
@@ -339,7 +345,7 @@ class UtilityCog(commands.Cog, name="Utility"):
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
         "camp": "campaign", "campaigns": "campaign",
-        "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character",
+        "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",

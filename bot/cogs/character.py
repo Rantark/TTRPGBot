@@ -9,9 +9,14 @@ from bot.data.races import get_race_names, resolve_race, DRACONIC_ANCESTRIES, RA
 from bot.data.classes import get_class_names, get_class_data, CLASSES
 from bot.data.backgrounds import get_background_names, get_background_data
 from bot.data.rules import (
-    ABILITY_NAMES, ABILITY_FULL_NAMES, STANDARD_ARRAY,
-    POINT_BUY_COSTS, POINT_BUY_BUDGET, modifier_str,
+    ABILITY_NAMES, ABILITY_FULL_NAMES, STANDARD_ARRAY, SKILLS,
+    POINT_BUY_COSTS, POINT_BUY_BUDGET, modifier_str, modifier,
 )
+from bot.data.weapons import WEAPONS, CLASS_STARTING_WEAPONS
+from bot.data.spell_lists import (
+    CLASS_SPELL_LISTS, CLASS_STARTING_SPELLS, calculate_prepared_count,
+)
+from bot.data.spells import get_cantrips_known, is_spellcaster
 from bot.dice import roll_ability_scores
 from bot.storage import load_campaign, save_campaign
 
@@ -52,6 +57,140 @@ class CharacterCog(commands.Cog, name="Character"):
     def _get_campaign(self, ctx: commands.Context):
         return load_campaign(str(ctx.channel.id))
 
+    # ------------------------------------------------------------------
+    # Quick stat commands
+    # ------------------------------------------------------------------
+
+    @commands.command(name="ac")
+    async def quick_ac(self, ctx: commands.Context):
+        """Quickly display your AC.
+
+        Usage: !ac
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createchar` to create one.")
+        await ctx.send(f"**{char.name}** — AC: **{char.ac}**")
+
+    @commands.command(name="stats")
+    async def quick_stats(self, ctx: commands.Context):
+        """Quickly display ability scores.
+
+        Usage: !stats
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createchar` to create one.")
+
+        lines = [f"**{char.name}'s Ability Scores:**"]
+        row1 = []
+        row2 = []
+        for i, ab in enumerate(ABILITY_NAMES):
+            score = char.abilities.get(ab, 10)
+            mod = modifier_str(score)
+            entry = f"{ab} {score} ({mod})"
+            if i < 3:
+                row1.append(entry)
+            else:
+                row2.append(entry)
+        lines.append(" | ".join(row1))
+        lines.append(" | ".join(row2))
+        await ctx.send("\n".join(lines))
+
+    @commands.command(name="skills")
+    async def quick_skills(self, ctx: commands.Context):
+        """Quickly display all skill modifiers.
+
+        Usage: !skills
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createchar` to create one.")
+
+        # Group skills by ability
+        skills_by_ab = {"STR": [], "DEX": [], "INT": [], "WIS": [], "CHA": []}
+        for skill_name, ab in sorted(SKILLS.items()):
+            if ab not in skills_by_ab:
+                skills_by_ab[ab] = []
+            mod = char.get_skill_modifier(skill_name)
+            prof_mark = " *" if skill_name in char.skill_proficiencies else ""
+            mod_s = f"+{mod}" if mod >= 0 else str(mod)
+            skills_by_ab[ab].append(f"{skill_name} {mod_s}{prof_mark}")
+
+        lines = [f"**{char.name}'s Skills:**"]
+        for ab in ["STR", "DEX", "INT", "WIS", "CHA"]:
+            if skills_by_ab.get(ab):
+                lines.append(f"**{ab}:** {', '.join(skills_by_ab[ab])}")
+        lines.append("*(* = proficient)*")
+        await ctx.send("\n".join(lines))
+
+    @commands.command(name="saves")
+    async def quick_saves(self, ctx: commands.Context):
+        """Quickly display saving throw modifiers.
+
+        Usage: !saves
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createchar` to create one.")
+
+        parts = []
+        for ab in ABILITY_NAMES:
+            mod = char.get_save_modifier(ab)
+            mod_s = f"+{mod}" if mod >= 0 else str(mod)
+            prof_mark = " *" if ab in char.saving_throw_proficiencies else ""
+            parts.append(f"{ab} **{mod_s}**{prof_mark}")
+
+        await ctx.send(f"**{char.name}'s Saving Throws:** {' | '.join(parts)}\n*(* = proficient)*")
+
+    @commands.command(name="weapons")
+    async def quick_weapons(self, ctx: commands.Context):
+        """Quickly display equipped weapons with attack/damage bonuses.
+
+        Usage: !weapons
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createchar` to create one.")
+
+        if not char.weapons:
+            return await ctx.send(f"**{char.name}** has no weapons equipped.")
+
+        lines = [f"**{char.name}'s Weapons:**"]
+        for w in char.weapons:
+            is_finesse = w.get('finesse', False)
+            is_ranged = w.get('category') == 'ranged'
+            if is_finesse or is_ranged:
+                ab_mod = char.get_modifier("DEX")
+            else:
+                ab_mod = char.get_modifier("STR")
+            atk_bonus = ab_mod + char.proficiency_bonus
+            atk_str = f"+{atk_bonus}" if atk_bonus >= 0 else str(atk_bonus)
+            dmg_str = f"+{ab_mod}" if ab_mod >= 0 else str(ab_mod)
+            props = f" | {', '.join(w['properties'])}" if w.get('properties') else ""
+            lines.append(f"  **{w['name']}** — Attack: {atk_str} | Damage: {w['damage']}{dmg_str} {w['damage_type']}{props}")
+
+        await ctx.send("\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # Character creation
+    # ------------------------------------------------------------------
+
     @commands.command(name="createchar")
     @commands.guild_only()
     async def create_char(self, ctx: commands.Context):
@@ -90,7 +229,8 @@ class CharacterCog(commands.Cog, name="Character"):
                 "Let's build your character step by step.\n\n"
                 "**Step 1: Name**\n"
                 "What is your character's name?\n"
-                "Reply with: `!cc <name>`"
+                "Reply with: `!cc <name>`\n"
+                "Example: `!cc Thandril`"
             )
             await ctx.send(f"{ctx.author.mention} Check your DMs — character creation has started there!")
         except discord.Forbidden:
@@ -140,6 +280,12 @@ class CharacterCog(commands.Cog, name="Character"):
             await self._step_skills(ctx, session, char, choice)
         elif step == "equipment":
             await self._step_equipment(ctx, session, char, choice)
+        elif step == "weapons":
+            await self._step_weapons(ctx, session, char, choice)
+        elif step == "spells_cantrips":
+            await self._step_spells_cantrips(ctx, session, char, choice)
+        elif step == "spells_level1":
+            await self._step_spells_level1(ctx, session, char, choice)
         elif step == "backstory":
             await self._step_backstory(ctx, session, char, choice)
         elif step == "confirm":
@@ -149,7 +295,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
     async def _step_name(self, ctx, session, char: Character, choice: str):
         if not choice.strip():
-            await ctx.send("Please provide a name: `!cc <name>`")
+            await ctx.send("Please provide a name: `!cc <name>`\nExample: `!cc Thandril`")
             return
         char.name = choice.strip()
         session["step"] = "gender"
@@ -158,11 +304,12 @@ class CharacterCog(commands.Cog, name="Character"):
         await ctx.send(
             f"Great, **{char.name}**!\n\n"
             f"**Step 2: Gender**\n"
-            f"What is your character's gender?\n"
+            f"Choose your character's gender:\n"
             f"`1.` Male\n"
             f"`2.` Female\n"
             f"`3.` Non-binary\n"
-            f"Or type anything else (e.g., `!cc Agender`)"
+            f"Or type anything else (e.g., `!cc Agender`)\n\n"
+            f"Example: `!cc Male`"
         )
 
     async def _step_gender(self, ctx, session, char: Character, choice: str):
@@ -181,8 +328,10 @@ class CharacterCog(commands.Cog, name="Character"):
         await ctx.send(
             f"Gender: **{char.gender}**\n\n"
             f"**Step 3: Race**\n"
-            f"Choose your race:\n{race_list}\n\n"
-            f"Reply with: `!cc <number or name>`"
+            f"Choose your character's race:\n{race_list}\n\n"
+            f"Each race grants ability score bonuses, traits, and languages.\n"
+            f"Reply with: `!cc <number or name>`\n"
+            f"Example: `!cc Elf`"
         )
 
     async def _step_race(self, ctx, session, char: Character, choice: str):
@@ -292,14 +441,16 @@ class CharacterCog(commands.Cog, name="Character"):
         class_list = []
         for cls_name in classes:
             data = CLASSES[cls_name]
-            class_list.append(f"{cls_name} — *{data['description'][:60]}*")
+            primary = data.get("primary_ability", "")
+            class_list.append(f"{cls_name} ({primary}) — d{data['hit_die']} HP")
         class_display = _format_numbered_list(class_list)
 
         await ctx.send(
             f"{msg}\n\n"
             f"**Step 4: Class**\n"
             f"Choose your class:\n{class_display}\n\n"
-            f"Reply with: `!cc <number or name>`"
+            f"Reply with: `!cc <number or name>`\n"
+            f"Example: `!cc Fighter`"
         )
 
     async def _step_class(self, ctx, session, char: Character, choice: str):
@@ -327,11 +478,12 @@ class CharacterCog(commands.Cog, name="Character"):
             f"**Class: {cls_name}** (d{cls_data['hit_die']})\n"
             f"*{cls_data['description']}*\n\n"
             f"**Step 5: Ability Scores**\n"
-            f"Choose your method:\n"
-            f"`1.` **Roll** — 4d6 drop lowest, 6 times\n"
-            f"`2.` **Standard Array** — {STANDARD_ARRAY}\n"
-            f"`3.` **Point Buy** — 27 points to spend\n\n"
-            f"Reply with: `!cc 1`, `!cc 2`, or `!cc 3`"
+            f"Choose how to generate your ability scores:\n\n"
+            f"`1.` **Roll** — Roll 4d6, drop lowest, 6 times (random)\n"
+            f"`2.` **Standard Array** — Use preset scores {STANDARD_ARRAY}\n"
+            f"`3.` **Point Buy** — Spend 27 points to customize (scores 8-15)\n\n"
+            f"Reply with: `!cc 1`, `!cc 2`, or `!cc 3`\n"
+            f"Example: `!cc roll` or `!cc standard array` or `!cc point buy`"
         )
 
     async def _step_ability_method(self, ctx, session, char: Character, choice: str):
@@ -367,7 +519,7 @@ class CharacterCog(commands.Cog, name="Character"):
                 f"(Rearrange the numbers however you want)"
             )
 
-        elif choice in ("2", "standard", "array"):
+        elif choice in ("2", "standard", "array", "standard array"):
             session["rolled_scores"] = list(STANDARD_ARRAY)
             session["step"] = "ability_assign"
             _set_session(ctx.author.id, session)
@@ -388,7 +540,10 @@ class CharacterCog(commands.Cog, name="Character"):
             await self._show_point_buy(ctx, session)
 
         else:
-            await ctx.send("Choose `1` (Roll), `2` (Standard Array), or `3` (Point Buy).")
+            await ctx.send(
+                "Choose `1` (Roll), `2` (Standard Array), or `3` (Point Buy).\n"
+                "Example: `!cc roll` or `!cc 2`"
+            )
 
     async def _step_ability_assign(self, ctx, session, char: Character, choice: str):
         available = sorted(session["rolled_scores"], reverse=True)
@@ -496,8 +651,9 @@ class CharacterCog(commands.Cog, name="Character"):
         await ctx.send(
             "\n".join(lines) + "\n\n"
             f"**Step 6: Background**\n"
-            f"Choose your background:\n{bg_list}\n\n"
-            f"Reply with: `!cc <number or name>`"
+            f"Choose your background (grants 2 skill proficiencies):\n{bg_list}\n\n"
+            f"Reply with: `!cc <number or name>`\n"
+            f"Example: `!cc Soldier`"
         )
 
     async def _step_background(self, ctx, session, char: Character, choice: str):
@@ -601,18 +757,17 @@ class CharacterCog(commands.Cog, name="Character"):
             all_items = list(session["equip_picks"]) + list(session["equip_fixed"])
             char.inventory = all_items
 
-            equip_display = "\n".join(f"  • {item}" for item in all_items)
+            equip_display = "\n".join(f"  {item}" for item in all_items)
 
-            session["step"] = "backstory"
+            # Move to weapon selection
+            session["step"] = "weapons"
+            session["weapon_choices"] = CLASS_STARTING_WEAPONS.get(char.char_class, [])
+            session["weapon_index"] = 0
+            session["weapon_picks"] = []
             _set_session(ctx.author.id, session)
 
-            await ctx.send(
-                f"**Starting Equipment:**\n{equip_display}\n\n"
-                f"**Step 9: Backstory** *(optional)*\n"
-                f"Write a short backstory for **{char.name}** (1-3 sentences).\n"
-                f"This helps the DM weave your character into the story.\n\n"
-                f"Reply with: `!cc <your backstory>` or `!cc skip` to skip"
-            )
+            await ctx.send(f"**Starting Equipment:**\n{equip_display}")
+            await self._show_weapon_choice(ctx, session, char)
             return
 
         current_choice = choices[idx]
@@ -646,6 +801,282 @@ class CharacterCog(commands.Cog, name="Character"):
         _set_session(ctx.author.id, session)
 
         await self._show_equipment_choice(ctx, session, char)
+
+    # ------------------------------------------------------------------
+    # Weapon selection step
+    # ------------------------------------------------------------------
+
+    async def _show_weapon_choice(self, ctx, session, char: Character):
+        """Show weapon choice or advance to spells."""
+        weapon_choices = session.get("weapon_choices", [])
+        idx = session.get("weapon_index", 0)
+
+        if idx >= len(weapon_choices):
+            # Done with weapons — move to spells
+            await self._advance_to_spells(ctx, session, char)
+            return
+
+        choice_group = weapon_choices[idx]
+        label = choice_group["label"]
+        options = choice_group["options"]
+
+        lines = [f"**Step 9: Weapon Selection** ({label})"]
+        lines.append("Choose your weapon:\n")
+        for i, weapon_key in enumerate(options, 1):
+            w = WEAPONS.get(weapon_key)
+            if w:
+                props = f" ({', '.join(w['properties'])})" if w.get('properties') else ""
+                lines.append(f"`{i:2d}.` **{w['name']}** — {w['damage']} {w['damage_type']}{props}")
+            else:
+                lines.append(f"`{i:2d}.` {weapon_key}")
+
+        lines.append(f"\nReply with: `!cc <number>`\nExample: `!cc 1`")
+
+        if idx > 0:
+            picked_names = [w.get('name', '?') for w in session.get("weapon_picks", [])]
+            if picked_names:
+                lines.append(f"\nAlready chosen: {', '.join(picked_names)}")
+
+        await ctx.send("\n".join(lines))
+
+    async def _step_weapons(self, ctx, session, char: Character, choice: str):
+        weapon_choices = session.get("weapon_choices", [])
+        idx = session.get("weapon_index", 0)
+
+        if idx >= len(weapon_choices):
+            await self._advance_to_spells(ctx, session, char)
+            return
+
+        options = weapon_choices[idx]["options"]
+
+        # Try as number
+        selected_key = None
+        choice = choice.strip()
+        if choice.isdigit():
+            num = int(choice) - 1
+            if 0 <= num < len(options):
+                selected_key = options[num]
+        else:
+            # Try matching by name
+            for key in options:
+                w = WEAPONS.get(key)
+                if w and w['name'].lower() == choice.lower():
+                    selected_key = key
+                    break
+                if key.lower() == choice.lower():
+                    selected_key = key
+                    break
+
+        if not selected_key:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(options)}).")
+            return
+
+        weapon_data = WEAPONS.get(selected_key)
+        if not weapon_data:
+            await ctx.send(f"Weapon not found: {selected_key}. Try again.")
+            return
+
+        session["weapon_picks"].append(dict(weapon_data))
+        session["weapon_index"] = idx + 1
+        _set_session(ctx.author.id, session)
+
+        await ctx.send(f"Selected: **{weapon_data['name']}**")
+        await self._show_weapon_choice(ctx, session, char)
+
+    # ------------------------------------------------------------------
+    # Spell selection step
+    # ------------------------------------------------------------------
+
+    async def _advance_to_spells(self, ctx, session, char: Character):
+        """Check if class gets spells at level 1, and set up spell selection."""
+        # Assign weapons to character
+        char.weapons = session.get("weapon_picks", [])
+
+        spell_info = CLASS_STARTING_SPELLS.get(char.char_class)
+        spell_list = CLASS_SPELL_LISTS.get(char.char_class)
+
+        # Non-casters or classes that don't get spells at level 1
+        if not spell_info or spell_info['spell_type'] == 'none' or spell_info['cantrips'] == 0:
+            await self._advance_to_backstory(ctx, session, char)
+            return
+
+        # Set up cantrip selection
+        session["cantrips_needed"] = spell_info['cantrips']
+        session["cantrips_available"] = list(spell_list['cantrips'])
+        session["cantrips_picked"] = []
+
+        # Calculate spells needed
+        if spell_info['spell_type'] == 'known':
+            session["spells_needed"] = spell_info['spells']
+        elif spell_info['spell_type'] == 'prepared':
+            wis_mod = modifier(char.abilities.get("WIS", 10))
+            int_mod = modifier(char.abilities.get("INT", 10))
+            session["spells_needed"] = calculate_prepared_count(char.char_class, 1, wis_mod, int_mod)
+        elif spell_info['spell_type'] == 'spellbook':
+            session["spells_needed"] = spell_info['spells']  # 6 for wizard
+        else:
+            session["spells_needed"] = 0
+
+        session["spells_available"] = list(spell_list['level_1'])
+        session["spells_picked"] = []
+        session["spell_type"] = spell_info['spell_type']
+
+        session["step"] = "spells_cantrips"
+        _set_session(ctx.author.id, session)
+
+        await self._show_cantrip_choice(ctx, session, char)
+
+    async def _show_cantrip_choice(self, ctx, session, char: Character):
+        needed = session["cantrips_needed"]
+        picked = session["cantrips_picked"]
+        available = [c for c in session["cantrips_available"] if c not in picked]
+
+        if len(picked) >= needed:
+            # Move to level 1 spells
+            if session.get("spells_needed", 0) > 0 and session.get("spells_available"):
+                session["step"] = "spells_level1"
+                _set_session(ctx.author.id, session)
+                await self._show_spell_choice(ctx, session, char)
+            else:
+                await self._finalize_spells(ctx, session, char)
+            return
+
+        lines = [f"**Step 10: Spell Selection — Cantrips**"]
+        lines.append(f"Choose {needed} cantrips for your {char.char_class}.")
+        lines.append(f"Progress: {len(picked)}/{needed} chosen\n")
+
+        for i, spell in enumerate(available, 1):
+            lines.append(f"`{i:2d}.` {spell}")
+
+        lines.append(f"\nReply with: `!cc <number>`\nExample: `!cc 1`")
+
+        if picked:
+            lines.append(f"\nChosen so far: {', '.join(picked)}")
+
+        await ctx.send("\n".join(lines))
+
+    async def _step_spells_cantrips(self, ctx, session, char: Character, choice: str):
+        picked = session["cantrips_picked"]
+        available = [c for c in session["cantrips_available"] if c not in picked]
+
+        choice = choice.strip()
+        selected = None
+        if choice.isdigit():
+            num = int(choice) - 1
+            if 0 <= num < len(available):
+                selected = available[num]
+        else:
+            # Try matching by name
+            for c in available:
+                if c.lower() == choice.lower() or c.lower().startswith(choice.lower()):
+                    selected = c
+                    break
+
+        if not selected:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(available)}).")
+            return
+
+        session["cantrips_picked"].append(selected)
+        _set_session(ctx.author.id, session)
+
+        await ctx.send(f"Added cantrip: **{selected}**")
+        await self._show_cantrip_choice(ctx, session, char)
+
+    async def _show_spell_choice(self, ctx, session, char: Character):
+        needed = session["spells_needed"]
+        picked = session["spells_picked"]
+        available = [s for s in session["spells_available"] if s not in picked]
+
+        if len(picked) >= needed:
+            await self._finalize_spells(ctx, session, char)
+            return
+
+        spell_type = session.get("spell_type", "known")
+        if spell_type == "prepared":
+            type_desc = f"You know all {char.char_class} spells. Choose {needed} to prepare."
+        elif spell_type == "spellbook":
+            type_desc = f"Choose {needed} spells to add to your spellbook."
+        else:
+            type_desc = f"Choose {needed} 1st-level spells."
+
+        lines = [f"**Step 10: Spell Selection — 1st Level Spells**"]
+        lines.append(f"{type_desc}")
+        lines.append(f"Progress: {len(picked)}/{needed} chosen\n")
+
+        for i, spell in enumerate(available, 1):
+            lines.append(f"`{i:2d}.` {spell}")
+
+        lines.append(f"\nReply with: `!cc <number>`\nExample: `!cc 1`")
+
+        if picked:
+            lines.append(f"\nChosen so far: {', '.join(picked)}")
+
+        await ctx.send("\n".join(lines))
+
+    async def _step_spells_level1(self, ctx, session, char: Character, choice: str):
+        picked = session["spells_picked"]
+        available = [s for s in session["spells_available"] if s not in picked]
+
+        choice = choice.strip()
+        selected = None
+        if choice.isdigit():
+            num = int(choice) - 1
+            if 0 <= num < len(available):
+                selected = available[num]
+        else:
+            for s in available:
+                if s.lower() == choice.lower() or s.lower().startswith(choice.lower()):
+                    selected = s
+                    break
+
+        if not selected:
+            await ctx.send(f"Invalid choice. Pick a number (1-{len(available)}).")
+            return
+
+        session["spells_picked"].append(selected)
+        _set_session(ctx.author.id, session)
+
+        await ctx.send(f"Added spell: **{selected}**")
+        await self._show_spell_choice(ctx, session, char)
+
+    async def _finalize_spells(self, ctx, session, char: Character):
+        """Save spell selections to character and advance."""
+        cantrips = session.get("cantrips_picked", [])
+        spells = session.get("spells_picked", [])
+        spell_type = session.get("spell_type", "known")
+
+        char.cantrips = cantrips
+
+        if spell_type == "known":
+            char.known_spells = spells
+            # Known casters have all their spells "prepared" automatically
+            char.prepared_spells = list(spells)
+        elif spell_type == "prepared":
+            # Cleric/Druid: know all class spells, prepare a subset
+            char.known_spells = list(session.get("spells_available", []))
+            char.prepared_spells = spells
+        elif spell_type == "spellbook":
+            # Wizard: spellbook holds known spells, prepare a subset
+            char.known_spells = spells
+            # At creation, all spellbook spells are prepared
+            wis_mod = modifier(char.abilities.get("WIS", 10))
+            int_mod = modifier(char.abilities.get("INT", 10))
+            num_prepared = calculate_prepared_count(char.char_class, 1, wis_mod, int_mod)
+            char.prepared_spells = spells[:num_prepared]
+
+        await self._advance_to_backstory(ctx, session, char)
+
+    async def _advance_to_backstory(self, ctx, session, char: Character):
+        """Move to backstory step."""
+        session["step"] = "backstory"
+        _set_session(ctx.author.id, session)
+
+        await ctx.send(
+            f"**Step 11: Backstory** *(optional)*\n"
+            f"Write a short backstory for **{char.name}** (1-3 sentences).\n"
+            f"This helps the DM weave your character into the story.\n\n"
+            f"Reply with: `!cc <your backstory>` or `!cc skip` to skip"
+        )
 
     async def _step_backstory(self, ctx, session, char: Character, choice: str):
         if not choice.strip():

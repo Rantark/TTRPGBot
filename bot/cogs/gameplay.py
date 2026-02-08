@@ -11,9 +11,10 @@ from discord.ext import commands
 
 from bot.models.campaign import CampaignPhase
 from bot.data.rules import ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS, modifier_str
-from bot.dice import parse_and_roll, roll_check
+from bot.dice import parse_and_roll, roll_check, parse_adv_dis
 from bot.dm_engine import parse_action_tags, extract_whispers
 from bot.storage import load_campaign, save_campaign
+from bot.utils.fuzzy_match import suggest_skill, suggest_ability
 
 
 class GameplayCog(commands.Cog, name="Gameplay"):
@@ -173,11 +174,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
     # ------------------------------------------------------------------
 
     @commands.command(name="action")
-    async def action(self, ctx: commands.Context, *, description: str):
+    async def action(self, ctx: commands.Context, *, description: str = None):
         """Describe what your character does. Queued until all players act.
 
         Usage: !action I search the room for hidden doors
         """
+        if not description:
+            await ctx.send(
+                "Please describe your action.\n"
+                "**Usage:** `!action <description>`\n"
+                "**Example:** `!action I search the room for traps`"
+            )
+            return
         campaign = self._get_campaign(ctx)
         if not self._require_active(campaign):
             await ctx.send("No active campaign. The DM needs to `!startcampaign` first.")
@@ -185,11 +193,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         await self._queue_action(ctx, campaign, f"[ACTION] {description}")
 
     @commands.command(name="ic")
-    async def in_character(self, ctx: commands.Context, *, dialogue: str):
+    async def in_character(self, ctx: commands.Context, *, dialogue: str = None):
         """Speak in character. Queued until all players act.
 
         Usage: !ic "Halt! Who goes there?"
         """
+        if not dialogue:
+            await ctx.send(
+                "Please provide dialogue.\n"
+                '**Usage:** `!ic <dialogue>`\n'
+                '**Example:** `!ic "Does anyone else hear that?"`'
+            )
+            return
         campaign = self._get_campaign(ctx)
         if not self._require_active(campaign):
             await ctx.send("No active campaign.")
@@ -200,11 +215,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         await self._queue_action(ctx, campaign, f'[IN CHARACTER] {char_name} says: "{dialogue}"')
 
     @commands.command(name="emote")
-    async def emote(self, ctx: commands.Context, *, description: str):
+    async def emote(self, ctx: commands.Context, *, description: str = None):
         """Describe your character's actions or expressions. Queued until all players act.
 
         Usage: !emote leans against the wall and crosses her arms
         """
+        if not description:
+            await ctx.send(
+                "Please describe an emote.\n"
+                "**Usage:** `!emote <action>`\n"
+                "**Example:** `!emote leans against the wall and crosses her arms`"
+            )
+            return
         campaign = self._get_campaign(ctx)
         if not self._require_active(campaign):
             await ctx.send("No active campaign.")
@@ -228,11 +250,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                                  "[LOOK] Describe the current scene and surroundings in detail.")
 
     @commands.command(name="inspect")
-    async def inspect(self, ctx: commands.Context, *, target: str):
+    async def inspect(self, ctx: commands.Context, *, target: str = None):
         """Examine something in the scene. Queued until all players act.
 
         Usage: !inspect the old chest
         """
+        if not target:
+            await ctx.send(
+                "Please specify what to examine.\n"
+                "**Usage:** `!inspect <target>`\n"
+                "**Example:** `!inspect the old chest`"
+            )
+            return
         campaign = self._get_campaign(ctx)
         if not self._require_active(campaign):
             await ctx.send("No active campaign.")
@@ -241,11 +270,19 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                                  f"[INSPECT] I examine {target} closely. What do I notice?")
 
     @commands.command(name="talk")
-    async def talk(self, ctx: commands.Context, *, target: str):
+    async def talk(self, ctx: commands.Context, *, target: str = None):
         """Talk to an NPC. The DM roleplays them. Queued until all players act.
 
         Usage: !talk the bartender
         """
+        if not target:
+            await ctx.send(
+                "Please specify which NPC you want to talk to.\n"
+                "**Usage:** `!talk <NPC name>`\n"
+                "**Example:** `!talk Innkeeper`\n"
+                "Use `!npcs` to see known NPCs."
+            )
+            return
         campaign = self._get_campaign(ctx)
         if not self._require_active(campaign):
             await ctx.send("No active campaign.")
@@ -294,6 +331,47 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             )
         if campaign.all_players_acted():
             await self._resolve_round(ctx, campaign)
+
+    @commands.command(name="undo")
+    async def undo_action(self, ctx: commands.Context):
+        """Cancel your pending action before the round resolves.
+
+        Only works during RP queue phase (not in combat).
+        Usage: !undo
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+
+        # Combat check
+        if campaign.combat.active:
+            await ctx.send("You cannot undo actions during combat. Actions are resolved immediately on your turn.")
+            return
+
+        player_id = str(ctx.author.id)
+
+        # Check pending actions
+        if player_id in campaign.pending_actions:
+            del campaign.pending_actions[player_id]
+            save_campaign(campaign)
+            await ctx.send(
+                "Your action has been cancelled.\n"
+                "You can now submit a new action with `!action`, `!ic`, `!emote`, or `!pass`."
+            )
+            return
+
+        # Check passed players
+        if player_id in campaign.passed_players:
+            campaign.passed_players.remove(player_id)
+            save_campaign(campaign)
+            await ctx.send(
+                "Your pass has been cancelled.\n"
+                "You can now submit an action with `!action`, `!ic`, `!emote`, or `!pass`."
+            )
+            return
+
+        await ctx.send("You don't have a pending action to undo.")
 
     @commands.command(name="resolve")
     async def resolve(self, ctx: commands.Context):
@@ -404,7 +482,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
         try:
             await target.send(f"**DM whispers to {char_name}:**\n{message}")
-            await ctx.message.add_reaction("\u2709\ufe0f")  # ✉️ envelope
+            await ctx.message.add_reaction("\u2709\ufe0f")  # envelope
         except discord.Forbidden:
             await ctx.send(f"Cannot send DM to {target.display_name} — they may have DMs disabled.")
 
@@ -459,14 +537,19 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
     @commands.command(name="roll")
     async def roll(self, ctx: commands.Context, *, notation: str):
-        """Roll dice using standard notation.
+        """Roll dice using standard notation, with optional advantage/disadvantage.
 
         Usage: !roll d20
         Usage: !roll 2d6+3
-        Usage: !roll 4d6
-        Usage: !roll d20+5
+        Usage: !roll d20 adv
+        Usage: !roll 1d20+5 dis
         """
-        result = parse_and_roll(notation)
+        notation, advantage, disadvantage = parse_adv_dis(notation)
+        if not notation:
+            await ctx.send("Please provide dice notation.\n**Usage:** `!roll <dice>` — e.g. `!roll d20`, `!roll 2d6+3 adv`")
+            return
+
+        result = parse_and_roll(notation, advantage=advantage, disadvantage=disadvantage)
         if "error" in result:
             await ctx.send(result["error"])
             return
@@ -478,8 +561,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         """Make an ability check using your character's modifier.
 
         Usage: !check perception
-        Usage: !check athletics
-        Usage: !check STR
+        Usage: !check athletics adv
+        Usage: !check STR dis
         """
         campaign = self._get_campaign(ctx)
         if not campaign:
@@ -491,7 +574,17 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             await ctx.send("You don't have a character. Use `!createchar` first.")
             return
 
+        # Parse advantage/disadvantage
+        ability, advantage, disadvantage = parse_adv_dis(ability)
         ability = ability.strip()
+
+        if not ability:
+            await ctx.send(
+                "Please specify a skill or ability.\n"
+                "**Usage:** `!check <skill or ability> [adv|dis]`\n"
+                "**Example:** `!check perception` or `!check STR adv`"
+            )
+            return
 
         # Check if it's a skill
         skill_match = None
@@ -517,14 +610,15 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             mod = char.get_skill_modifier(skill_match)
             prof = " (proficient)" if skill_match in char.skill_proficiencies else ""
             result = roll_check(mod - char.proficiency_bonus if skill_match in char.skill_proficiencies else mod,
-                                char.proficiency_bonus if skill_match in char.skill_proficiencies else 0)
+                                char.proficiency_bonus if skill_match in char.skill_proficiencies else 0,
+                                advantage=advantage, disadvantage=disadvantage)
             label = f"{skill_match} check{prof}"
         elif ab_match:
             mod = char.get_modifier(ab_match)
-            result = roll_check(mod)
+            result = roll_check(mod, advantage=advantage, disadvantage=disadvantage)
             label = f"{ABILITY_FULL_NAMES[ab_match]} check"
         else:
-            await ctx.send(f"Unknown ability or skill: `{ability}`. Try a skill name (Perception, Athletics) or ability (STR, DEX).")
+            await ctx.send(suggest_skill(ability))
             return
 
         nat = ""
@@ -540,7 +634,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         """Make a saving throw.
 
         Usage: !save DEX
-        Usage: !save wisdom
+        Usage: !save wisdom adv
+        Usage: !save CON dis
         """
         campaign = self._get_campaign(ctx)
         if not campaign:
@@ -552,7 +647,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             await ctx.send("You don't have a character.")
             return
 
+        # Parse advantage/disadvantage
+        ability, advantage, disadvantage = parse_adv_dis(ability)
         ability = ability.strip()
+
+        if not ability:
+            await ctx.send(
+                "Please specify an ability.\n"
+                "**Usage:** `!save <ability> [adv|dis]`\n"
+                "**Example:** `!save DEX` or `!save wisdom dis`"
+            )
+            return
+
         ab_match = None
         for ab in ABILITY_NAMES:
             if ab.lower() == ability.lower() or ABILITY_FULL_NAMES[ab].lower() == ability.lower():
@@ -563,12 +669,12 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                 break
 
         if not ab_match:
-            await ctx.send(f"Unknown ability: `{ability}`. Use STR, DEX, CON, INT, WIS, or CHA.")
+            await ctx.send(suggest_ability(ability))
             return
 
         mod = char.get_modifier(ab_match)
         prof = char.proficiency_bonus if ab_match in char.saving_throw_proficiencies else 0
-        result = roll_check(mod, prof)
+        result = roll_check(mod, prof, advantage=advantage, disadvantage=disadvantage)
         prof_mark = " (proficient)" if prof else ""
 
         nat = ""
@@ -580,10 +686,12 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         await ctx.send(f"**{char.name}** — {ABILITY_FULL_NAMES[ab_match]} saving throw{prof_mark}: {result['breakdown']}{nat}")
 
     @commands.command(name="attack")
-    async def attack(self, ctx: commands.Context):
+    async def attack(self, ctx: commands.Context, *, args: str = ""):
         """Make an attack roll (d20 + STR or DEX mod + proficiency).
 
         Usage: !attack
+        Usage: !attack adv
+        Usage: !attack dis
         """
         campaign = self._get_campaign(ctx)
         if not campaign:
@@ -594,6 +702,9 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if not char:
             await ctx.send("You don't have a character.")
             return
+
+        # Parse advantage/disadvantage
+        _, advantage, disadvantage = parse_adv_dis(args) if args else ("", False, False)
 
         # Use highest of STR/DEX for attack (simple heuristic)
         str_mod = char.get_modifier("STR")
@@ -606,7 +717,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             attack_mod = str_mod
             ab_used = "STR"
 
-        result = roll_check(attack_mod, char.proficiency_bonus)
+        result = roll_check(attack_mod, char.proficiency_bonus,
+                            advantage=advantage, disadvantage=disadvantage)
 
         nat = ""
         if result["natural_20"]:

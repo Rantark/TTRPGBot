@@ -58,6 +58,8 @@ class Character:
         self.known_spells = []           # List of spell names the character knows
         self.prepared_spells = []        # List of spell names currently prepared
         self.cantrips = []               # List of cantrip names
+        # Weapons
+        self.weapons = []                # List of weapon dicts from weapons database
         # Creation state tracking
         self.creation_complete = False
 
@@ -224,6 +226,23 @@ class Character:
                     mod_strs.append(f"{source} ({', '.join(parts)})")
                 lines.append(f"  🔧 **Modifiers:** {', '.join(mod_strs)}")
 
+        # ── Weapons ──
+        if self.weapons:
+            lines.append(f"╠{'═' * 42}╣")
+            lines.append("  **Weapons**")
+            for w in self.weapons:
+                is_finesse = w.get('finesse', False)
+                is_ranged = w.get('category') == 'ranged'
+                if is_finesse or is_ranged:
+                    ab_mod = self.get_modifier("DEX")
+                else:
+                    ab_mod = self.get_modifier("STR")
+                atk_bonus = ab_mod + self.proficiency_bonus
+                atk_str = f"+{atk_bonus}" if atk_bonus >= 0 else str(atk_bonus)
+                dmg_str = f"+{ab_mod}" if ab_mod >= 0 else str(ab_mod)
+                props = f" ({', '.join(w['properties'])})" if w.get('properties') else ""
+                lines.append(f"  • **{w['name']}** Atk {atk_str} | {w['damage']}{dmg_str} {w['damage_type']}{props}")
+
         # ── Spellcasting ──
         if self.spellcasting_ability:
             lines.append(f"╠{'═' * 42}╣")
@@ -300,6 +319,7 @@ class Character:
             "known_spells": self.known_spells,
             "prepared_spells": self.prepared_spells,
             "cantrips": self.cantrips,
+            "weapons": self.weapons,
             "creation_complete": self.creation_complete,
         }
 

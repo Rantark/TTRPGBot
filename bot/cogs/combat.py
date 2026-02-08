@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from bot.models.campaign import CampaignPhase
-from bot.dice import roll_initiative
+from bot.dice import roll_initiative, parse_adv_dis
 from bot.storage import load_campaign, save_campaign
 
 
@@ -66,10 +66,12 @@ class CombatCog(commands.Cog, name="Combat"):
         )
 
     @commands.command(name="initiative")
-    async def roll_initiative_cmd(self, ctx: commands.Context):
+    async def roll_initiative_cmd(self, ctx: commands.Context, *, args: str = ""):
         """Roll initiative for your character (d20 + DEX modifier).
 
         Usage: !initiative
+        Usage: !initiative adv
+        Usage: !initiative dis
         """
         campaign = self._get_campaign(ctx)
         if not campaign:
@@ -84,8 +86,11 @@ class CombatCog(commands.Cog, name="Combat"):
             await ctx.send("You don't have a character.")
             return
 
+        # Parse advantage/disadvantage
+        _, advantage, disadvantage = parse_adv_dis(args) if args else ("", False, False)
+
         dex_mod = char.get_modifier("DEX")
-        result = roll_initiative(dex_mod)
+        result = roll_initiative(dex_mod, advantage=advantage, disadvantage=disadvantage)
 
         # Remove existing entry for this player
         campaign.combat.initiative_order = [
