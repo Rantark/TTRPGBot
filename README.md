@@ -29,6 +29,9 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - [Combat System & Tactical Map](#combat-system--tactical-map)
 - [Spell System](#spell-system)
 - [DM Tools & Action Tags](#dm-tools--action-tags)
+- [Advantage & Disadvantage](#advantage--disadvantage)
+- [Quick Stat Commands](#quick-stat-commands)
+- [Fuzzy Matching & Error Messages](#fuzzy-matching--error-messages)
 - [Prompt Caching (Cost Savings)](#prompt-caching-cost-savings)
 - [Environment Variables](#environment-variables)
 - [Project Structure](#project-structure)
@@ -39,15 +42,18 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 ## Features at a Glance
 
 - **AI Dungeon Master** — Claude narrates the story, roleplays NPCs, manages encounters, and adjudicates rules
-- **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, backstory. **Private DM-based flow** so multiple players can create simultaneously
+- **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, weapon selection, spell/cantrip selection for casters, backstory. **Private DM-based flow** so multiple players can create simultaneously with step-by-step help text
 - **Campaign System** — Pitch/vote on concepts, setup phase for character creation, DM-controlled start
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
 - **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
 - **Spell System** — Track spell slots, known/prepared spells, cantrips, and casting (full/half/pact casters)
 - **DM Tools** — `!dm` narration command, action tags for automatic game state updates, DM whispers to individual players
-- **Full Dice Engine** — Standard notation (d20, 2d6+3), ability checks, saving throws, attack rolls with advantage/disadvantage
+- **Full Dice Engine** — Standard notation (d20, 2d6+3), ability checks, saving throws, attack rolls — all with `adv`/`dis` keyword support for advantage/disadvantage
 - **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves, feats, stat modifiers
+- **Quick Stat Commands** — Instant views for AC, ability scores, skills, saves, and weapons (`!ac`, `!stats`, `!skills`, `!saves`, `!weapons`)
 - **Equipment & Inventory** — Starting equipment selection during creation, add/remove items anytime
+- **Fuzzy Matching** — Mistype a skill or ability? The bot suggests the closest match ("Did you mean Perception?")
+- **Undo System** — Cancel pending RP actions with `!undo` before the round resolves
 - **Utility** — AI recaps, investigation clue tracker, NPC journal, private DM whispers
 - **`!ask` Command** — Ask the DM rules questions without advancing the story
 - **Prompt Caching** — Anthropic prompt caching reduces API costs by up to 90% on repeat calls
@@ -264,6 +270,11 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!deletechar` | Delete your character and start over |
 | `!sheet` | View your full character sheet |
 | `!sheet @player` | View another player's character sheet |
+| `!ac` | View your AC breakdown |
+| `!stats` | View your ability scores and modifiers |
+| `!skills` | View all skill modifiers (with proficiency markers) |
+| `!saves` | View saving throw modifiers |
+| `!weapons` | View your weapons and attack bonuses |
 | `!equipment` | View your inventory/gear (aliases: `!inv`, `!inventory`) |
 | `!equipment add <item>` | Add an item to your inventory |
 | `!equipment remove <item or #>` | Remove an item by name or number |
@@ -283,6 +294,7 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!inspect <target>` | Examine something closely *(queued)* |
 | `!talk <NPC>` | Speak to an NPC — Claude roleplays them *(queued)* |
 | `!pass` | Do nothing this round |
+| `!undo` | Cancel your pending action before the round resolves |
 | `!pending` | See who hasn't acted yet |
 | `!resolve` | *(DM)* Force the round to resolve early |
 | `!dm <prompt>` | *(DM)* Prompt Claude to narrate a scene or event |
@@ -292,19 +304,23 @@ During non-combat play, actions are **queued** until all players have submitted 
 
 ### Dice & Rolls
 
+All dice commands support **advantage** and **disadvantage** — just add `adv` or `dis` at the end.
+
 | Command | Example | Description |
 |---|---|---|
-| `!roll <notation>` | `!roll 2d6+3` | Roll any dice (d20, 4d6, d8+2, etc.) |
-| `!check <skill>` | `!check perception` | Ability/skill check with your modifier |
-| `!save <ability>` | `!save DEX` | Saving throw with proficiency if applicable |
-| `!attack` | `!attack` | Attack roll (d20 + ability mod + proficiency) |
+| `!roll <notation> [adv\|dis]` | `!roll 2d6+3` | Roll any dice (d20, 4d6, d8+2, etc.) |
+| `!check <skill> [adv\|dis]` | `!check perception adv` | Ability/skill check with your modifier |
+| `!save <ability> [adv\|dis]` | `!save DEX dis` | Saving throw with proficiency if applicable |
+| `!attack [adv\|dis]` | `!attack adv` | Attack roll (d20 + ability mod + proficiency) |
+
+Advantage rolls the d20 twice and takes the higher result. Disadvantage takes the lower. Both individual rolls are shown.
 
 ### Combat & Tactical Map
 
 | Command | Who | Description |
 |---|---|---|
 | `!combatstart` | DM | Begin a combat encounter |
-| `!initiative` | Player | Roll initiative (d20 + DEX mod) |
+| `!initiative [adv\|dis]` | Player | Roll initiative (d20 + DEX mod) |
 | `!addnpc <name> <roll>` | DM | Add an NPC/monster to initiative |
 | `!removenpc <name>` | DM | Remove an NPC from initiative |
 | `!begincombat` | DM | Sort initiative and start turn order |
@@ -373,7 +389,9 @@ Spell slots are tracked per D&D 5e rules: full casters (Bard, Cleric, Druid, Sor
 
 ## Character Creation Walkthrough
 
-When a player types `!createchar` in the server channel, the bot sends them a **private DM** to walk through 9 steps. This keeps character choices secret from other players and allows multiple players to create characters at the same time. All `!cc` responses happen in DMs — only the final "character joined the party" announcement appears in the server channel.
+When a player types `!createchar` in the server channel, the bot sends them a **private DM** to walk through character creation. This keeps character choices secret from other players and allows multiple players to create characters at the same time. All `!cc` responses happen in DMs — only the final "character joined the party" announcement appears in the server channel.
+
+Every step includes **help text** showing available options, numbered lists, and usage examples so players never have to guess what to type.
 
 ### Step 1: Name
 
@@ -466,7 +484,56 @@ Bot:     You selected: Any simple weapon
          Fixed items added: Explorer's pack, 4 javelins
 ```
 
-### Step 9: Backstory (Optional)
+### Step 9: Weapon Selection
+
+Choose your starting weapons from class-appropriate options. Each class has one or more weapon choice groups. The bot shows weapon stats (damage, type, properties) for each option:
+
+```
+Bot:     Choose your Primary weapon:
+           1. Longsword — 1d8 slashing [Versatile (1d10)]
+           2. Battleaxe — 1d8 slashing [Versatile (1d10)]
+           3. Greatsword — 2d6 slashing [Heavy, Two-handed]
+           4. Rapier — 1d8 piercing [Finesse]
+!cc 4
+Bot:     Selected: Rapier
+         Choose your Ranged weapon:
+           1. Light Crossbow — 1d8 piercing [Ammunition, Loading, Two-handed]
+           2. Longbow — 1d8 piercing [Ammunition, Heavy, Two-handed]
+!cc 2
+Bot:     Selected: Longbow
+```
+
+Weapons appear on your character sheet with calculated attack bonuses (STR or DEX mod + proficiency). Use `!weapons` anytime to view them.
+
+### Step 10: Spell Selection (Spellcasters Only)
+
+If your class can cast spells, you'll choose starting cantrips and 1st-level spells. The number depends on your class:
+
+| Class | Cantrips | Level 1 Spells | Type |
+|---|---|---|---|
+| Bard | 2 | 4 known | Known |
+| Cleric | 3 | WIS mod + 1 prepared | Prepared |
+| Druid | 2 | WIS mod + 1 prepared | Prepared |
+| Sorcerer | 4 | 2 known | Known |
+| Warlock | 2 | 2 known | Known |
+| Wizard | 3 | 6 in spellbook | Spellbook |
+| Paladin | 0 | WIS mod + 1 prepared | Prepared |
+| Ranger | 0 | 2 known | Known |
+
+```
+Bot:     Choose cantrip 1 of 3:
+           1. Guidance  2. Light  3. Sacred Flame  4. Spare the Dying  5. Thaumaturgy
+!cc 3
+Bot:     Learned cantrip: Sacred Flame (1/3)
+         Choose cantrip 2 of 3:
+           1. Guidance  2. Light  3. Spare the Dying  4. Thaumaturgy
+!cc 1
+Bot:     Learned cantrip: Guidance (2/3)
+```
+
+Non-caster classes (Barbarian, Fighter, Monk, Rogue) skip this step automatically.
+
+### Step 11: Backstory (Optional)
 
 Write a short backstory for your character, or type `skip` to leave it blank. You can always set or update it later with `!backstory <text>`.
 
@@ -475,7 +542,7 @@ Write a short backstory for your character, or type `skip` to leave it blank. Yo
 Bot:     Backstory saved!
 ```
 
-After confirming, the character is saved and ready to play. View anytime with `!sheet`, `!equipment`, or `!backstory`.
+After confirming, the character is saved and ready to play. View anytime with `!sheet`, `!equipment`, `!weapons`, or `!backstory`.
 
 ---
 
@@ -495,6 +562,7 @@ This prevents the problem where two players talk to the DM separately and get co
 **Special commands:**
 
 - `!pending` — See who hasn't acted yet
+- `!undo` — Cancel your pending action and rejoin the waiting list
 - `!resolve` — DM can force the round to resolve early (e.g., if someone is AFK)
 - `!pass` — Player has nothing to do this round
 - `!ooc` — Out-of-character chat, does NOT count as an action
@@ -517,6 +585,9 @@ Bot:     COMBAT STARTED! All players: Roll initiative with !initiative
 ```
 Player:  !initiative
 Bot:     Thandril rolls initiative: [14] +2 = 16
+
+Player:  !initiative adv       # With advantage (e.g., Alert feat)
+Bot:     Thandril rolls initiative (advantage): [14, 8] → 14 +2 = 16
 ```
 
 The DM adds NPCs manually:
@@ -733,6 +804,75 @@ Bot:     Removed modifier Shield (ac +2) from Thandril.
 
 Modifiers automatically affect all derived calculations — ability checks, saving throws, skill rolls, AC, and passive scores. They're visible on `!sheet` and to Claude in the DM context.
 
+### Advantage & Disadvantage
+
+All dice commands support advantage and disadvantage via the `adv` and `dis` keywords:
+
+```
+Player:  !check perception adv
+Bot:     Perception check (advantage): [14, 8] → 14 +3 = 17
+
+Player:  !save DEX dis
+Bot:     DEX saving throw (disadvantage): [12, 18] → 12 +4 = 16
+
+Player:  !attack adv
+Bot:     Attack roll (advantage): [19, 7] → 19 +5 = 24
+
+Player:  !roll d20 dis
+Bot:     Rolling d20 (disadvantage): [4, 15] → 4
+```
+
+The bot rolls the d20 twice and takes the higher (advantage) or lower (disadvantage) result. Both individual rolls are always displayed.
+
+### Quick Stat Commands
+
+View specific parts of your character sheet without the full `!sheet`:
+
+```
+Player:  !ac
+Bot:     Thandril's AC: 16 (base 10 + DEX +3 + armor/shield)
+
+Player:  !stats
+Bot:     Thandril — Ability Scores:
+         STR 16 (+3)  DEX 14 (+2)  CON 13 (+1)
+         INT 10 (+0)  WIS 12 (+1)  CHA  8 (-1)
+
+Player:  !skills
+Bot:     Thandril — Skill Modifiers:
+         Athletics +5★  Acrobatics +2  Stealth +2 ...
+         (★ = proficient)
+
+Player:  !saves
+Bot:     Thandril — Saving Throws:
+         STR +5★  DEX +2  CON +3★  INT +0  WIS +1  CHA -1
+
+Player:  !weapons
+Bot:     Thandril — Weapons:
+         Longsword — +5 to hit, 1d8+3 slashing [Versatile (1d10)]
+         Longbow — +4 to hit, 1d8+2 piercing [Ammunition, Heavy, Two-handed]
+```
+
+### Fuzzy Matching & Error Messages
+
+Mistype a skill, ability, or condition name? The bot suggests the closest match:
+
+```
+Player:  !check percption
+Bot:     Unknown skill: `percption`. Did you mean **Perception**?
+
+Player:  !save DEXTERITY
+Bot:     Unknown ability: `DEXTERITY`. Did you mean **DEX**?
+```
+
+All gameplay commands also include usage examples when called without arguments:
+
+```
+Player:  !action
+Bot:     Describe what your character does.
+         Usage: `!action <description>`
+         Examples: `!action I search the room for traps`
+```
+
 ---
 
 ## Prompt Caching (Cost Savings)
@@ -775,25 +915,29 @@ TTRPGBot/
 ├── bot/
 │   ├── main.py              # Entry point — bot setup, event handlers, error handling
 │   ├── dm_engine.py          # Claude AI DM — API calls, prompt caching, action tag parser
-│   ├── dice.py               # Dice rolling engine (notation parsing, ability checks)
+│   ├── dice.py               # Dice rolling engine (notation parsing, ability checks, adv/dis)
 │   ├── storage.py            # Persistent JSON file storage per campaign
 │   ├── cogs/
 │   │   ├── campaign.py       # !newcampaign, !pitch, !vote, !startcampaign, etc.
-│   │   ├── character.py      # !createchar, !cc (9-step creation), !sheet, !equipment, !backstory
-│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !dm-whisper, RP queue
+│   │   ├── character.py      # !createchar, !cc (creation), !sheet, !ac/stats/skills/saves/weapons
+│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !undo, RP queue
 │   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
 │   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !feat, !modifier
 │   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
 │   │   └── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands
 │   ├── models/
-│   │   ├── character.py      # Character class — stats, abilities, spells, serialization
+│   │   ├── character.py      # Character class — stats, abilities, spells, weapons, serialization
 │   │   └── campaign.py       # Campaign, CombatState, CombatMap, RP queue state
+│   ├── utils/
+│   │   └── fuzzy_match.py    # Fuzzy matching for skills, abilities, conditions
 │   └── data/
 │       ├── races.py          # All PHB races + subraces with bonuses and traits
 │       ├── classes.py         # All 12 PHB classes with proficiencies & starting equipment
 │       ├── backgrounds.py    # 13 PHB backgrounds with skills and features
 │       ├── spells.py         # Spell slot tables for full/half/pact casters
-│       └── rules.py          # Ability scores, skills, proficiency table, XP table
+│       ├── rules.py          # Ability scores, skills, proficiency table, XP table
+│       ├── weapons.py        # All PHB weapons + class starting weapon choices
+│       └── spell_lists.py    # Spell lists per class + starting spell counts
 ├── data/
 │   └── campaigns/            # Auto-created — JSON save files live here
 ├── requirements.txt          # Python dependencies
