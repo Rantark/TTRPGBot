@@ -373,6 +373,55 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
         await ctx.send("You don't have a pending action to undo.")
 
+    @commands.command(name="rewind")
+    async def rewind_scene(self, ctx: commands.Context, *, new_prompt: str = ""):
+        """DM-only: Undo the last DM response and optionally re-prompt.
+
+        Removes the last assistant+user exchange from conversation history.
+        If a new prompt is provided, generates a replacement scene.
+
+        Usage: !rewind
+        Usage: !rewind Actually, the NPC survives and runs away
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+        if campaign.dm_id != str(ctx.author.id):
+            await ctx.send("Only the DM can rewind the scene.")
+            return
+
+        if len(campaign.message_history) < 2:
+            await ctx.send("No recent scene to rewind.")
+            return
+
+        # Remove last assistant response and the user message that prompted it
+        if campaign.message_history[-1]["role"] == "assistant":
+            campaign.message_history.pop()
+        if campaign.message_history and campaign.message_history[-1]["role"] == "user":
+            campaign.message_history.pop()
+
+        # Also remove last session log entry
+        if campaign.session_log:
+            campaign.session_log.pop()
+
+        save_campaign(campaign)
+
+        if new_prompt:
+            await ctx.send("**Rewound last scene.** Generating replacement...")
+            async with ctx.typing():
+                raw_response = await self.bot.dm_engine.get_dm_narration(campaign, new_prompt)
+
+            campaign.add_session_log(f"DM rewind: {new_prompt[:80]}")
+            clean_response = await self._process_dm_response(ctx, campaign, raw_response)
+            save_campaign(campaign)
+            await self._send_long(ctx, clean_response)
+        else:
+            await ctx.send(
+                "**Rewound last scene.** The previous DM response has been erased from history.\n"
+                "Continue gameplay normally, or use `!dm <prompt>` to narrate a new scene."
+            )
+
     @commands.command(name="resolve")
     async def resolve(self, ctx: commands.Context):
         """DM forces the round to resolve now, even if not all players have acted.

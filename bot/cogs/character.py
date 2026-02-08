@@ -73,7 +73,21 @@ class CharacterCog(commands.Cog, name="Character"):
         char = campaign.get_character(str(ctx.author.id))
         if not char:
             return await ctx.send("You don't have a character. Use `!createchar` to create one.")
-        await ctx.send(f"**{char.name}** — AC: **{char.ac}**")
+        ac_parts = [f"**{char.name}** — AC: **{char.ac}**"]
+        if isinstance(char.equipped, dict):
+            armor = char.equipped.get("armor")
+            shield = char.equipped.get("shield")
+            sources = []
+            if armor:
+                sources.append(armor)
+            elif char.char_class in ("Barbarian", "Monk"):
+                sources.append("Unarmored Defense")
+            else:
+                sources.append("Unarmored")
+            if shield:
+                sources.append("Shield +2")
+            ac_parts.append(f"({', '.join(sources)})")
+        await ctx.send(" ".join(ac_parts))
 
     @commands.command(name="stats")
     async def quick_stats(self, ctx: commands.Context):
@@ -1132,6 +1146,14 @@ class CharacterCog(commands.Cog, name="Character"):
         if choice.strip().lower() != "skip":
             char.backstory = choice.strip()
 
+        # Set starting armor based on class
+        from bot.data.armor import CLASS_STARTING_ARMOR, CLASS_STARTING_SHIELD
+        armor = CLASS_STARTING_ARMOR.get(char.char_class)
+        if armor:
+            char.equipped["armor"] = armor
+        if CLASS_STARTING_SHIELD.get(char.char_class):
+            char.equipped["shield"] = True
+
         # Finalize character at the campaign's starting level
         starting_level = session.get("starting_level", 1)
         char.finalize(starting_level=starting_level)
@@ -1204,12 +1226,24 @@ class CharacterCog(commands.Cog, name="Character"):
             return
 
         if not action:
-            if not char.inventory:
-                await ctx.send(f"**{char.name}** has no equipment. Use `!equipment add <item>` to add items.")
-                return
-            lines = [f"**{char.name}'s Equipment:**"]
-            for i, item in enumerate(char.inventory, 1):
-                lines.append(f"  `{i}.` {item}")
+            lines = [f"**{char.name}'s Inventory:**"]
+            if char.gold:
+                lines.append(f"  💰 **Gold:** {char.gold} gp")
+            # Show equipped items
+            if isinstance(char.equipped, dict):
+                equipped_items = []
+                if char.equipped.get("armor"):
+                    equipped_items.append(f"Armor: {char.equipped['armor']}")
+                if char.equipped.get("shield"):
+                    equipped_items.append("Shield")
+                if equipped_items:
+                    lines.append(f"  🛡 **Equipped:** {', '.join(equipped_items)}")
+            if not char.inventory and not char.gold:
+                lines.append("  *Empty inventory*")
+                lines.append("Use `!equipment add <item>` to add items.")
+            else:
+                for i, item in enumerate(char.inventory, 1):
+                    lines.append(f"  `{i}.` {char._format_inv_item(item)}")
             await ctx.send("\n".join(lines))
             return
 
@@ -1245,6 +1279,217 @@ class CharacterCog(commands.Cog, name="Character"):
                 await ctx.send(f"Item **{target}** not found in inventory.")
         else:
             await ctx.send("Usage: `!equipment`, `!equipment add <item>`, `!equipment remove <item or #>`")
+
+    @commands.command(name="gold")
+    async def gold_cmd(self, ctx: commands.Context, *, action: str = ""):
+        """View or adjust your gold. DM can adjust any player.
+
+        Usage: !gold (view your gold)
+        Usage: !gold +50 (gain 50 gold)
+        Usage: !gold -10 (spend 10 gold)
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+
+        # DM targeting another player
+        target_id = str(ctx.author.id)
+        if ctx.message.mentions and campaign.dm_id == str(ctx.author.id):
+            target_id = str(ctx.message.mentions[0].id)
+            action = action.replace(ctx.message.mentions[0].mention, "").strip()
+
+        char = campaign.get_character(target_id)
+        if not char:
+            return await ctx.send("No character found.")
+
+        if not action:
+            return await ctx.send(f"**{char.name}** — 💰 **{char.gold} gp**")
+
+        try:
+            change = int(action)
+        except ValueError:
+            return await ctx.send("Usage: `!gold`, `!gold +50`, `!gold -10`")
+
+        if char.gold + change < 0:
+            return await ctx.send(f"**{char.name}** only has {char.gold} gp. Not enough to spend {abs(change)} gp.")
+
+        char.gold += change
+        save_campaign(campaign)
+        if change > 0:
+            await ctx.send(f"**{char.name}** gained {change} gp. Total: **{char.gold} gp**")
+        else:
+            await ctx.send(f"**{char.name}** spent {abs(change)} gp. Total: **{char.gold} gp**")
+
+    @commands.command(name="give")
+    async def give_item(self, ctx: commands.Context, target: discord.Member, *, item_description: str):
+        """Give an item or gold to another player.
+
+        Usage: !give @Player Potion of Healing
+        Usage: !give @Player 50 gold
+        Usage: !give @Player 2 arrows
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+
+        giver = campaign.get_character(str(ctx.author.id))
+        receiver = campaign.get_character(str(target.id))
+        if not giver:
+            return await ctx.send("You don't have a character.")
+        if not receiver:
+            return await ctx.send(f"{target.display_name} doesn't have a character.")
+
+        # Parse "50 gold" or "2 arrows" or "Potion of Healing"
+        parts = item_description.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            quantity = int(parts[0])
+            item_name = parts[1]
+        else:
+            quantity = 1
+            item_name = item_description.strip()
+
+        # Gold transfer
+        if item_name.lower() in ("gold", "gp", "gold pieces"):
+            if giver.gold < quantity:
+                return await ctx.send(f"You only have {giver.gold} gp.")
+            giver.gold -= quantity
+            receiver.gold += quantity
+            save_campaign(campaign)
+            return await ctx.send(f"**{giver.name}** gave **{quantity} gp** to **{receiver.name}**.")
+
+        # Item transfer
+        if not giver.has_item(item_name, quantity):
+            return await ctx.send(f"You don't have {quantity}x **{item_name}**.")
+
+        giver.remove_item(item_name, quantity)
+        receiver.add_item(item_name, quantity)
+        save_campaign(campaign)
+        qty_str = f"{quantity}x " if quantity > 1 else ""
+        await ctx.send(f"**{giver.name}** gave {qty_str}**{item_name}** to **{receiver.name}**.")
+
+    @commands.command(name="use")
+    async def use_item(self, ctx: commands.Context, *, item_name: str):
+        """Use a consumable from your inventory.
+
+        Known consumables (healing potions, etc.) apply effects automatically.
+        Unknown items are removed and the DM narrates the effect.
+
+        Usage: !use Potion of Healing
+        """
+        from bot.data.consumables import get_consumable
+        from bot.dice import parse_and_roll
+
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character.")
+        if not char.has_item(item_name):
+            return await ctx.send(f"You don't have **{item_name}**. Use `!equipment` to see your inventory.")
+
+        effect = get_consumable(item_name)
+
+        if effect and effect["effect_type"] == "heal":
+            char.remove_item(item_name, 1)
+            result = parse_and_roll(effect["dice"])
+            healing = result["total"] + effect["bonus"]
+            old_hp = char.current_hp
+            char.current_hp = min(char.max_hp, char.current_hp + healing)
+            actual = char.current_hp - old_hp
+            save_campaign(campaign)
+            await ctx.send(
+                f"**{char.name}** uses **{effect['name']}**\n"
+                f"Healing: {result['breakdown']}+{effect['bonus']} = **{healing} HP**\n"
+                f"HP: {old_hp} -> **{char.current_hp}/{char.max_hp}** (+{actual})"
+            )
+        elif effect and effect["effect_type"] == "remove_condition":
+            char.remove_item(item_name, 1)
+            condition = effect["condition"]
+            if condition in char.conditions:
+                char.conditions.remove(condition)
+                save_campaign(campaign)
+                await ctx.send(f"**{char.name}** uses **{effect['name']}** — removed *{condition}* condition.")
+            else:
+                save_campaign(campaign)
+                await ctx.send(f"**{char.name}** uses **{effect['name']}**. (No *{condition}* condition to remove.)")
+        else:
+            # Unknown consumable — remove and let DM narrate
+            char.remove_item(item_name, 1)
+            save_campaign(campaign)
+            await ctx.send(f"**{char.name}** uses **{item_name}**. *(DM will narrate the effect.)*")
+
+    @commands.command(name="equip")
+    async def equip_item(self, ctx: commands.Context, slot: str = "", *, item_name: str = ""):
+        """Equip or unequip armor and shields.
+
+        Usage: !equip armor Chain Mail
+        Usage: !equip shield (toggle shield on/off)
+        Usage: !equip (show what's equipped)
+        """
+        from bot.data.armor import get_armor
+
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character.")
+
+        # Ensure equipped is a dict
+        if not isinstance(char.equipped, dict):
+            char.equipped = {"armor": None, "shield": False}
+
+        if not slot:
+            # Show currently equipped
+            lines = [f"**{char.name}'s Equipment:**"]
+            lines.append(f"  Armor: **{char.equipped.get('armor') or 'None'}**")
+            lines.append(f"  Shield: **{'Yes' if char.equipped.get('shield') else 'No'}**")
+            lines.append(f"  AC: **{char.ac}**")
+            return await ctx.send("\n".join(lines))
+
+        slot = slot.lower()
+
+        if slot == "shield":
+            char.equipped["shield"] = not char.equipped.get("shield", False)
+            old_ac = char.ac
+            char.calc_ac()
+            save_campaign(campaign)
+            state = "equipped" if char.equipped["shield"] else "unequipped"
+            await ctx.send(f"**{char.name}** {state} **Shield** (AC: {old_ac} -> **{char.ac}**)")
+            return
+
+        if slot == "armor":
+            if not item_name:
+                # Unequip armor
+                old_armor = char.equipped.get("armor")
+                if not old_armor:
+                    return await ctx.send(f"**{char.name}** isn't wearing armor.")
+                char.equipped["armor"] = None
+                old_ac = char.ac
+                char.calc_ac()
+                save_campaign(campaign)
+                return await ctx.send(f"**{char.name}** removed **{old_armor}** (AC: {old_ac} -> **{char.ac}**)")
+
+            armor_data = get_armor(item_name)
+            if not armor_data:
+                return await ctx.send(f"Unknown armor: **{item_name}**. Valid armor: Leather, Studded Leather, Hide, "
+                                      "Chain Shirt, Scale Mail, Breastplate, Half Plate, Ring Mail, Chain Mail, Splint, Plate")
+
+            old_armor = char.equipped.get("armor")
+            char.equipped["armor"] = armor_data["name"]
+            old_ac = char.ac
+            char.calc_ac()
+            save_campaign(campaign)
+            msg = f"**{char.name}** equipped **{armor_data['name']}** (AC: {old_ac} -> **{char.ac}**)"
+            if old_armor:
+                msg += f"\n*(Replaced {old_armor})*"
+            await ctx.send(msg)
+            return
+
+        await ctx.send("Usage: `!equip`, `!equip armor <name>`, `!equip shield`")
 
     @commands.command(name="backstory")
     async def backstory(self, ctx: commands.Context, *, text: str = ""):

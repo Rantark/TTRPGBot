@@ -164,6 +164,91 @@ class CampaignCog(commands.Cog, name="Campaign"):
             "When everyone is ready, the DM uses `!startcampaign` to begin the adventure."
         )
 
+    @commands.command(name="loot")
+    async def loot(self, ctx: commands.Context, target: discord.Member, *, item_description: str):
+        """DM adds items or gold to a player's inventory.
+
+        Usage: !loot @Player Potion of Healing
+        Usage: !loot @Player 50 gold
+        Usage: !loot @Player 2 Arrows
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+        if str(ctx.author.id) != campaign.dm_id:
+            await ctx.send("Only the DM can give loot.")
+            return
+
+        char = campaign.get_character(str(target.id))
+        if not char:
+            await ctx.send(f"{target.display_name} doesn't have a character.")
+            return
+
+        # Parse "50 gold" or "2 Arrows" or "Potion of Healing"
+        parts = item_description.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            quantity = int(parts[0])
+            item_name = parts[1]
+        else:
+            quantity = 1
+            item_name = item_description.strip()
+
+        if item_name.lower() in ("gold", "gp", "gold pieces"):
+            char.gold += quantity
+            save_campaign(campaign)
+            await ctx.send(f"**{char.name}** received **{quantity} gp**. Total: {char.gold} gp")
+        else:
+            char.add_item(item_name, quantity)
+            save_campaign(campaign)
+            qty_str = f"{quantity}x " if quantity > 1 else ""
+            await ctx.send(f"**{char.name}** received {qty_str}**{item_name}**.")
+
+    @commands.command(name="giveall")
+    async def give_all(self, ctx: commands.Context, *, item_description: str):
+        """DM gives items or gold to all players.
+
+        Usage: !giveall 100 gold
+        Usage: !giveall Potion of Healing
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+        if str(ctx.author.id) != campaign.dm_id:
+            await ctx.send("Only the DM can give loot.")
+            return
+
+        complete_chars = [c for c in campaign.characters.values() if c.creation_complete]
+        if not complete_chars:
+            await ctx.send("No characters to give items to.")
+            return
+
+        # Parse
+        parts = item_description.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            quantity = int(parts[0])
+            item_name = parts[1]
+        else:
+            quantity = 1
+            item_name = item_description.strip()
+
+        is_gold = item_name.lower() in ("gold", "gp", "gold pieces")
+        for char in complete_chars:
+            if is_gold:
+                char.gold += quantity
+            else:
+                char.add_item(item_name, quantity)
+
+        save_campaign(campaign)
+
+        qty_str = f"{quantity}x " if quantity > 1 else ""
+        names = ", ".join(c.name for c in complete_chars)
+        if is_gold:
+            await ctx.send(f"**{quantity} gp** given to all players: {names}")
+        else:
+            await ctx.send(f"{qty_str}**{item_name}** given to all players: {names}")
+
     @commands.command(name="setlevel")
     async def set_level(self, ctx: commands.Context, level: int = 0):
         """DM sets the starting level for new characters.

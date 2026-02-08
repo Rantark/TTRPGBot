@@ -103,6 +103,43 @@ def parse_action_tags(response_text: str, campaign: Campaign) -> tuple[str, list
                         char.spell_slots_used[lvl_key] = used + 1
                         log_entries.append(f"{char.name} used a level {level} spell slot")
 
+        elif action_type == "LOOT":
+            # Parse "CharacterName | item1, item2 x2, 50 gold"
+            if "|" in params:
+                char_name, loot_string = params.split("|", 1)
+                char_name = char_name.strip()
+                char = campaign.get_character_by_name(char_name)
+                if char:
+                    items = [item.strip() for item in loot_string.split(",")]
+                    for item in items:
+                        if not item:
+                            continue
+                        # Check for quantity suffix: "Potion of Healing x2"
+                        if " x" in item:
+                            item_name, qty_str = item.rsplit(" x", 1)
+                            try:
+                                qty = int(qty_str)
+                            except ValueError:
+                                item_name = item
+                                qty = 1
+                        # Check for gold: "50 gold"
+                        elif item.split()[0].isdigit() and any(
+                            w in item.lower() for w in ("gold", "gp")
+                        ):
+                            qty = int(item.split()[0])
+                            item_name = "gold"
+                        else:
+                            item_name = item
+                            qty = 1
+
+                        if item_name.lower() in ("gold", "gp", "gold pieces"):
+                            char.gold += qty
+                            log_entries.append(f"{char.name} received {qty} gp")
+                        else:
+                            char.add_item(item_name.strip(), qty)
+                            qty_str = f" x{qty}" if qty > 1 else ""
+                            log_entries.append(f"{char.name} received {item_name.strip()}{qty_str}")
+
         # WHISPER tags are handled separately (need Discord context), keep them for now
         elif action_type == "WHISPER":
             # Return the full match so it can be extracted later
@@ -123,7 +160,7 @@ def extract_whispers(text: str) -> tuple[str, list[tuple[str, str]]]:
     """
     whispers = []
     # Match [WHISPER: Name] followed by text until next tag or end of line(s)
-    pattern = re.compile(r'\[WHISPER:\s*([^\]]+)\]\s*(.+?)(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT):|$)', re.DOTALL)
+    pattern = re.compile(r'\[WHISPER:\s*([^\]]+)\]\s*(.+?)(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT|LOOT):|$)', re.DOTALL)
     for match in pattern.finditer(text):
         char_name = match.group(1).strip()
         message = match.group(2).strip()
@@ -131,7 +168,7 @@ def extract_whispers(text: str) -> tuple[str, list[tuple[str, str]]]:
             whispers.append((char_name, message))
 
     # Remove whisper tags from display text
-    clean = re.compile(r'\[WHISPER:\s*[^\]]+\]\s*.+?(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT):|$)', re.DOTALL)
+    clean = re.compile(r'\[WHISPER:\s*[^\]]+\]\s*.+?(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT|LOOT):|$)', re.DOTALL)
     clean_text = clean.sub('', text)
     clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
     return clean_text, whispers
@@ -196,6 +233,14 @@ PRIVATE INFORMATION (whisper to one player):
 SPELL SLOT USAGE:
 [SPELL_SLOT: CharacterName -1] — Consume a spell slot at the specified level
 
+LOOT & TREASURE:
+[LOOT: CharacterName | item_name]       — Give an item to a character
+[LOOT: CharacterName | item_name x2]    — Give multiple of an item
+[LOOT: CharacterName | 50 gold]         — Give gold
+[LOOT: CharacterName | 50 gold, Potion of Healing, Old Key]  — Give multiple items at once
+
+Use this whenever a character finds, receives, or loots items. The bot adds them to the character's inventory automatically.
+
 EXAMPLES:
 "The orc's axe crashes down! [DAMAGE: Thandril -9] Thandril, you take 9 slashing damage."
 
@@ -204,7 +249,9 @@ Kael, you feel venom coursing through your veins."
 
 "[WHISPER: Elara] You notice a hidden door behind the tapestry — the others haven't seen it."
 
-Use these tags whenever you deal damage, heal, inflict conditions, or share secrets.
+"The chest contains a modest treasure. [LOOT: Thandril | 25 gold, Potion of Healing]"
+
+Use these tags whenever you deal damage, heal, inflict conditions, give loot, or share secrets.
 Always include the tag AND describe the effect narratively."""
 
 # Cache control marker — tells Anthropic to cache everything up to this point.

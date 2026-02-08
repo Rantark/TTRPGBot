@@ -214,6 +214,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!vote <#>` — Vote for a pitch\n"
                 "`!selectpitch <#>` — DM selects a pitch\n"
                 "`!setlevel <level>` — *(DM)* Set starting level for new characters\n"
+                "`!loot @player <item>` — *(DM)* Give item/gold to a player\n"
+                "`!giveall <item>` — *(DM)* Give item/gold to all players\n"
                 "`!startcampaign` — DM begins the adventure\n"
                 "`!endcampaign` — DM ends the campaign\n"
                 "`!campaigninfo` — View campaign status"
@@ -235,6 +237,10 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!weapons` — View your weapons and attack bonuses\n"
                 "`!equipment` — View your inventory/gear\n"
                 "`!equipment add/remove <item>` — Manage inventory\n"
+                "`!gold` — View your gold | `!gold +/-<amt>` — Adjust\n"
+                "`!equip` — View equipped armor | `!equip armor/shield <name>`\n"
+                "`!give @player <item>` — Give item/gold to a player\n"
+                "`!use <item>` — Use a consumable (auto-effects for potions)\n"
                 "`!backstory` — View your backstory\n"
                 "`!backstory <text>` — Set/update your backstory"
             ),
@@ -253,6 +259,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!undo` — Cancel your pending action before the round resolves\n"
                 "`!pending` — See who hasn't acted yet\n"
                 "`!resolve` — *(DM)* Force the round to resolve now\n"
+                "`!rewind` — *(DM)* Undo last DM response\n"
+                "`!rewind <prompt>` — *(DM)* Undo and replace with new scene\n"
                 "`!dm <prompt>` — *(DM)* Narrate a scene or event\n"
                 "`!dm-whisper @player <msg>` — *(DM)* Private message to a player\n"
                 "`!ask <question>` — Ask the DM a rules question *(no story impact)*\n"
@@ -346,7 +354,7 @@ class UtilityCog(commands.Cog, name="Utility"):
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
         "camp": "campaign", "campaigns": "campaign",
-        "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character",
+        "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",

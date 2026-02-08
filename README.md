@@ -47,13 +47,13 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
 - **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
 - **Spell System** — Track spell slots, known/prepared spells, cantrips, and casting (full/half/pact casters)
-- **DM Tools** — `!dm` narration command, action tags for automatic game state updates, DM whispers to individual players
+- **DM Tools** — `!dm` narration, `!rewind` to undo DM mistakes, `!loot`/`!giveall` for item distribution, action tags for automatic state updates, DM whispers
 - **Full Dice Engine** — Standard notation (d20, 2d6+3), ability checks, saving throws, attack rolls — all with `adv`/`dis` keyword support for advantage/disadvantage
 - **Progression** — Short/long rest, HP management, XP tracking, level up with HP rolls, inspiration, death saves, feats, stat modifiers
 - **Quick Stat Commands** — Instant views for AC, ability scores, skills, saves, and weapons (`!ac`, `!stats`, `!skills`, `!saves`, `!weapons`)
-- **Equipment & Inventory** — Starting equipment selection during creation, add/remove items anytime
+- **Inventory & Loot System** — Gold tracking, item stacking, `!give` items between players, `!use` consumables with auto-effects (healing potions), `!equip` armor/shields with AC recalculation, `[LOOT:]` tags for automatic inventory updates from Claude
 - **Fuzzy Matching** — Mistype a skill or ability? The bot suggests the closest match ("Did you mean Perception?")
-- **Undo System** — Cancel pending RP actions with `!undo` before the round resolves
+- **Undo System** — Cancel pending RP actions with `!undo`, DM can `!rewind` to undo AI mistakes
 - **Utility** — AI recaps, investigation clue tracker, NPC journal, private DM whispers
 - **`!ask` Command** — Ask the DM rules questions without advancing the story
 - **Prompt Caching** — Anthropic prompt caching reduces API costs by up to 90% on repeat calls
@@ -265,6 +265,8 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!vote <#>` | Anyone | Vote for a pitch |
 | `!selectpitch <#>` | DM | Select a pitch and move to setup phase |
 | `!setlevel <level>` | DM | Set starting level for new characters (1-20) |
+| `!loot @player <item>` | DM | Give item/gold to a player's inventory |
+| `!giveall <item>` | DM | Give item/gold to all players |
 | `!startcampaign` | DM | Begin the adventure (requires at least one character) |
 | `!endcampaign` | DM | End the campaign permanently |
 | `!campaigninfo` | Anyone | View campaign status and player list |
@@ -286,6 +288,12 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!equipment` | View your inventory/gear (aliases: `!inv`, `!inventory`) |
 | `!equipment add <item>` | Add an item to your inventory |
 | `!equipment remove <item or #>` | Remove an item by name or number |
+| `!gold` | View your gold |
+| `!gold +50` / `!gold -10` | Adjust your gold (DM can target: `!gold @player +50`) |
+| `!give @player <item>` | Give an item or gold to another player |
+| `!use <item>` | Use a consumable (auto-effects for healing potions, antitoxin) |
+| `!equip <armor/shield>` | Equip armor or shield (recalculates AC) |
+| `!equip none` | Remove armor; `!equip no shield` to remove shield |
 | `!backstory` | View your character's backstory |
 | `!backstory <text>` | Set or update your backstory |
 
@@ -308,6 +316,7 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!dm <prompt>` | *(DM)* Prompt Claude to narrate a scene or event |
 | `!dm-whisper @player <msg>` | *(DM)* Send a private message to a player via DM |
 | `!ask <question>` | Ask the DM a rules question *(does NOT advance the story)* |
+| `!rewind [prompt]` | *(DM)* Undo the last AI response; optional re-prompt |
 | `!ooc <message>` | Out-of-character chat *(not queued, DM doesn't respond)* |
 
 ### Dice & Rolls
@@ -756,6 +765,7 @@ Claude automatically updates game state through hidden tags in its narration. Pl
 | `[CONDITION: Name remove X]` | Remove a condition | `[CONDITION: Kael remove poisoned]` |
 | `[NPC_DEFEAT: Name]` | Remove NPC from combat | `[NPC_DEFEAT: Goblin1]` |
 | `[SPELL_SLOT: Name -level]` | Consume a spell slot | `[SPELL_SLOT: Elara -1]` |
+| `[LOOT: Name \| items]` | Add items/gold to inventory | `[LOOT: Thandril \| Potion of Healing, 50 gold]` |
 | `[WHISPER: Name] msg` | Private DM to one player | `[WHISPER: Elara] You see a hidden door` |
 
 **Example of what Claude might write:**
@@ -945,7 +955,9 @@ TTRPGBot/
 │       ├── spells.py         # Spell slot tables for full/half/pact casters
 │       ├── rules.py          # Ability scores, skills, proficiency table, XP table
 │       ├── weapons.py        # All PHB weapons + class starting weapon choices
-│       └── spell_lists.py    # Spell lists per class + starting spell counts
+│       ├── spell_lists.py    # Spell lists per class + starting spell counts
+│       ├── armor.py          # PHB armor database + AC calculation
+│       └── consumables.py    # Consumable items (healing potions, antitoxin)
 ├── data/
 │   └── campaigns/            # Auto-created — JSON save files live here
 ├── requirements.txt          # Python dependencies

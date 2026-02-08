@@ -7,6 +7,7 @@ from bot.data.rules import (
     modifier, modifier_str, proficiency_bonus, xp_for_next_level, calc_ac_unarmored,
 )
 from bot.data.spells import get_spell_slots
+from bot.data.armor import get_armor, calc_armor_ac
 
 
 class Character:
@@ -62,6 +63,12 @@ class Character:
         self.cantrips = []               # List of cantrip names
         # Weapons
         self.weapons = []                # List of weapon dicts from weapons database
+        # Gold and equipped items
+        self.gold = 0
+        self.equipped = {                # Currently worn/equipped items
+            "armor": None,               # Armor name (str) or None
+            "shield": False,             # True if shield equipped
+        }
         # Creation state tracking
         self.creation_complete = False
 
@@ -98,6 +105,67 @@ class Character:
             mod += self.proficiency_bonus
         return mod
 
+    # ------------------------------------------------------------------
+    # Inventory helpers
+    # ------------------------------------------------------------------
+
+    def add_item(self, item_name: str, quantity: int = 1):
+        """Add item(s) to inventory. Stacks if item already exists."""
+        # Check for existing stack (exact case-insensitive match)
+        for i, entry in enumerate(self.inventory):
+            if isinstance(entry, dict) and entry["name"].lower() == item_name.lower():
+                entry["quantity"] = entry.get("quantity", 1) + quantity
+                return
+            elif isinstance(entry, str) and entry.lower() == item_name.lower():
+                # Migrate old string entry to dict
+                self.inventory[i] = {"name": entry, "quantity": 1 + quantity}
+                return
+        # New item
+        if quantity > 1:
+            self.inventory.append({"name": item_name, "quantity": quantity})
+        else:
+            self.inventory.append(item_name)
+
+    def remove_item(self, item_name: str, quantity: int = 1) -> bool:
+        """Remove item(s) from inventory. Returns False if not enough."""
+        for i, entry in enumerate(self.inventory):
+            name = entry["name"] if isinstance(entry, dict) else entry
+            if name.lower() == item_name.lower():
+                if isinstance(entry, dict):
+                    current = entry.get("quantity", 1)
+                    if current < quantity:
+                        return False
+                    entry["quantity"] = current - quantity
+                    if entry["quantity"] <= 0:
+                        self.inventory.pop(i)
+                else:
+                    if quantity > 1:
+                        return False
+                    self.inventory.pop(i)
+                return True
+        return False
+
+    def has_item(self, item_name: str, quantity: int = 1) -> bool:
+        """Check if character has at least `quantity` of an item."""
+        for entry in self.inventory:
+            name = entry["name"] if isinstance(entry, dict) else entry
+            if name.lower() == item_name.lower():
+                current = entry.get("quantity", 1) if isinstance(entry, dict) else 1
+                return current >= quantity
+        return False
+
+    def get_item_count(self, item_name: str) -> int:
+        """Return the quantity of an item in inventory."""
+        for entry in self.inventory:
+            name = entry["name"] if isinstance(entry, dict) else entry
+            if name.lower() == item_name.lower():
+                return entry.get("quantity", 1) if isinstance(entry, dict) else 1
+        return 0
+
+    # ------------------------------------------------------------------
+    # Derived stat calculations
+    # ------------------------------------------------------------------
+
     def calc_hp(self):
         """Calculate max HP for current level.
 
@@ -119,15 +187,28 @@ class Character:
         self.hit_dice_remaining = self.level
 
     def calc_ac(self):
-        """Calculate base AC (unarmored) plus modifier bonuses."""
-        self.ac = calc_ac_unarmored(self.get_effective_ability("DEX"))
-        # Barbarian unarmored defense
-        if self.char_class == "Barbarian":
-            self.ac = 10 + self.get_modifier("DEX") + self.get_modifier("CON")
-        # Monk unarmored defense
+        """Calculate AC based on equipped armor, class features, and modifiers."""
+        dex_mod = self.get_modifier("DEX")
+        armor_name = self.equipped.get("armor") if isinstance(self.equipped, dict) else None
+
+        if armor_name and get_armor(armor_name):
+            # Armored AC
+            self.ac = calc_armor_ac(armor_name, dex_mod)
+        elif self.char_class == "Barbarian":
+            # Barbarian unarmored defense: 10 + DEX + CON
+            self.ac = 10 + dex_mod + self.get_modifier("CON")
         elif self.char_class == "Monk":
-            self.ac = 10 + self.get_modifier("DEX") + self.get_modifier("WIS")
-        # Apply AC modifiers (shields, magic items, etc.)
+            # Monk unarmored defense: 10 + DEX + WIS
+            self.ac = 10 + dex_mod + self.get_modifier("WIS")
+        else:
+            # Standard unarmored: 10 + DEX
+            self.ac = 10 + dex_mod
+
+        # Shield: +2 AC
+        if isinstance(self.equipped, dict) and self.equipped.get("shield"):
+            self.ac += 2
+
+        # Apply AC modifiers (magic items, buffs, etc.)
         self.ac += self.get_stat_bonus("ac")
 
     def update_proficiency(self):
@@ -179,8 +260,22 @@ class Character:
         # ── Core Stats Bar ──
         hp_bar = self._hp_bar(16)
         lines.append(f"  ❤ **HP** {self.current_hp}/{self.max_hp}  `{hp_bar}`")
-        lines.append(f"  🛡 **AC** {self.ac}   ⚡ **Speed** {self.speed} ft   🎲 **Prof** +{self.proficiency_bonus}")
+        # AC with armor source
+        ac_source = ""
+        if isinstance(self.equipped, dict):
+            armor = self.equipped.get("armor")
+            shield = self.equipped.get("shield")
+            parts = []
+            if armor:
+                parts.append(armor)
+            if shield:
+                parts.append("Shield")
+            if parts:
+                ac_source = f" ({', '.join(parts)})"
+        lines.append(f"  🛡 **AC** {self.ac}{ac_source}   ⚡ **Speed** {self.speed} ft   🎲 **Prof** +{self.proficiency_bonus}")
         lines.append(f"  🎯 **Hit Dice** {self.hit_dice_remaining}d{self.hit_die}   ✨ **XP** {self.xp}/{xp_for_next_level(self.level)}")
+        if self.gold:
+            lines.append(f"  💰 **Gold** {self.gold} gp")
 
         if self.draconic_ancestry:
             lines.append(f"  🐉 **Draconic Ancestry:** {self.draconic_ancestry}")
@@ -338,6 +433,8 @@ class Character:
             "prepared_spells": self.prepared_spells,
             "cantrips": self.cantrips,
             "weapons": self.weapons,
+            "gold": self.gold,
+            "equipped": self.equipped,
             "creation_complete": self.creation_complete,
         }
 
@@ -349,14 +446,25 @@ class Character:
                 setattr(c, key, value)
         return c
 
+    def _format_inv_item(self, entry) -> str:
+        """Format a single inventory entry for display."""
+        if isinstance(entry, dict):
+            name = entry["name"]
+            qty = entry.get("quantity", 1)
+            return f"{name} x{qty}" if qty > 1 else name
+        return str(entry)
+
     def short_summary(self) -> str:
         """One-line character summary for DM context."""
         race_display = self.subrace if self.subrace else self.race
         gender_str = f", {self.gender}" if self.gender else ""
         summary = (f"{self.name} (Level {self.level} {race_display} {self.char_class}{gender_str}, "
                    f"HP {self.current_hp}/{self.max_hp}, AC {self.ac})")
+        if self.gold:
+            summary += f" Gold: {self.gold} gp."
         if self.inventory:
-            summary += f" Equipment: {', '.join(self.inventory[:8])}"
+            items = [self._format_inv_item(e) for e in self.inventory[:8]]
+            summary += f" Equipment: {', '.join(items)}"
             if len(self.inventory) > 8:
                 summary += f" (+{len(self.inventory) - 8} more)"
         return summary
@@ -428,9 +536,12 @@ class Character:
 
         # Equipment highlights (first 5)
         if self.inventory:
-            equip = ', '.join(self.inventory[:5])
+            items = [self._format_inv_item(e) for e in self.inventory[:5]]
+            equip = ', '.join(items)
             extra = f" (+{len(self.inventory) - 5} more)" if len(self.inventory) > 5 else ""
             lines.append(f"  Equipment: {equip}{extra}")
+        if self.gold:
+            lines.append(f"  Gold: {self.gold} gp")
 
         # Backstory
         if self.backstory:
