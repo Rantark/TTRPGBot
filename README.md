@@ -357,13 +357,15 @@ Advantage rolls the d20 twice and takes the higher result. Disadvantage takes th
 |---|---|---|
 | `!rest short` | Player | Short rest — spend hit dice to heal (warlock pact slots restored) |
 | `!rest long` | Player | Long rest — full HP, restore hit dice & all spell slots |
-| `!hp` | Player | View your current HP |
+| `!hitdie [count]` | Player | Spend hit dice to heal (alias: `!hd`) |
+| `!hp` | Player | View your current HP (shows unconscious status) |
 | `!hp +5` / `!hp -3` | Player/DM | Heal or take damage |
 | `!xp <amount>` | DM | Award XP to all players |
 | `!xp <amount> @player` | DM | Award XP to one player |
 | `!levelup` | Player | Level up if you have enough XP (spell slots update automatically) |
 | `!inspiration @player` | DM | Grant inspiration |
 | `!deathsave` | Player | Roll a death saving throw |
+| `!stabilize @player` | Anyone | Stabilize an unconscious character at 0 HP |
 | `!feat` | Player | List your feats |
 | `!feat add <name>` | Player | Add a feat |
 | `!feat remove <name>` | Player | Remove a feat |

@@ -489,7 +489,11 @@ class Character:
         gender_str = f", {self.gender}" if self.gender else ""
 
         lines = [f"- {self.name} ({race_display} {self.char_class} {self.level}{gender_str})"]
-        lines.append(f"  HP: {self.current_hp}/{self.max_hp} | AC: {self.ac} | Prof: +{self.proficiency_bonus}")
+        hp_status = ""
+        if self.current_hp == 0:
+            ds = self.death_saves
+            hp_status = f" [UNCONSCIOUS — Death Saves: {ds['successes']} success, {ds['failures']} fail]"
+        lines.append(f"  HP: {self.current_hp}/{self.max_hp}{hp_status} | AC: {self.ac} | Prof: +{self.proficiency_bonus}")
 
         # Ability modifiers
         ab_strs = []

@@ -160,7 +160,10 @@ class ProgressionCog(commands.Cog, name="Progression"):
             return
 
         if not amount:
-            await ctx.send(f"**{char.name}** — HP: **{char.current_hp}/{char.max_hp}** (Temp HP: {char.temp_hp})")
+            status = ""
+            if char.current_hp == 0:
+                status = " — **UNCONSCIOUS** (making death saves)"
+            await ctx.send(f"**{char.name}** — HP: **{char.current_hp}/{char.max_hp}** (Temp HP: {char.temp_hp}){status}")
             return
 
         try:
@@ -174,10 +177,21 @@ class ProgressionCog(commands.Cog, name="Progression"):
         save_campaign(campaign)
 
         if change > 0:
-            await ctx.send(f"**{char.name}** healed {change} HP: {old_hp} -> **{char.current_hp}/{char.max_hp}**")
+            msg = f"**{char.name}** healed {change} HP: {old_hp} -> **{char.current_hp}/{char.max_hp}**"
+            # Regain consciousness if healed from 0
+            if old_hp == 0 and char.current_hp > 0:
+                char.death_saves = {"successes": 0, "failures": 0}
+                if "unconscious" in [c.lower() for c in char.conditions]:
+                    char.conditions = [c for c in char.conditions if c.lower() != "unconscious"]
+                save_campaign(campaign)
+                msg += f"\n**{char.name} regains consciousness!**"
+            await ctx.send(msg)
         elif change < 0:
             await ctx.send(f"**{char.name}** took {abs(change)} damage: {old_hp} -> **{char.current_hp}/{char.max_hp}**")
-            if char.current_hp == 0:
+            if char.current_hp == 0 and old_hp > 0:
+                if "unconscious" not in [c.lower() for c in char.conditions]:
+                    char.conditions.append("unconscious")
+                save_campaign(campaign)
                 await ctx.send(f"**{char.name} has fallen to 0 HP!** Death saving throws begin...")
 
     @commands.command(name="xp")
@@ -315,6 +329,92 @@ class ProgressionCog(commands.Cog, name="Progression"):
         char.inspiration = True
         save_campaign(campaign)
         await ctx.send(f"**{char.name}** has been granted **Inspiration**!")
+
+    @commands.command(name="hitdie", aliases=["hd"])
+    async def hit_die(self, ctx: commands.Context, count: int = 1):
+        """Spend hit dice to heal (use during short rest).
+
+        Usage: !hitdie (spend 1)
+        Usage: !hitdie 3 (spend 3)
+        Usage: !hd 2
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        if count < 1:
+            await ctx.send("Must spend at least 1 hit die.")
+            return
+
+        if char.hit_dice_remaining <= 0:
+            await ctx.send(f"**{char.name}** has no hit dice remaining. Take a long rest to recover them.")
+            return
+
+        if char.current_hp >= char.max_hp:
+            await ctx.send(f"**{char.name}** is already at full HP ({char.max_hp}/{char.max_hp}).")
+            return
+
+        # Clamp to available dice
+        count = min(count, char.hit_dice_remaining)
+
+        con_mod = char.get_modifier("CON")
+        total_healed = 0
+        rolls = []
+        for _ in range(count):
+            roll = roll_die(char.hit_die)
+            healed = max(roll + con_mod, 1)
+            total_healed += healed
+            rolls.append(f"d{char.hit_die} [{roll}] + CON ({con_mod:+d}) = {healed}")
+
+        old_hp = char.current_hp
+        char.current_hp = min(char.current_hp + total_healed, char.max_hp)
+        actual = char.current_hp - old_hp
+        char.hit_dice_remaining -= count
+        save_campaign(campaign)
+
+        msg = f"**{char.name}** spends {count} hit {'die' if count == 1 else 'dice'}:\n"
+        msg += "\n".join(f"  {r}" for r in rolls)
+        msg += f"\n\nHealed: **{actual}** HP"
+        msg += f"\nHP: {old_hp} -> **{char.current_hp}/{char.max_hp}**"
+        msg += f"\nHit Dice remaining: {char.hit_dice_remaining}/{char.level}"
+        await ctx.send(msg)
+
+    @commands.command(name="stabilize")
+    async def stabilize(self, ctx: commands.Context, member: discord.Member = None):
+        """Stabilize an unconscious character at 0 HP.
+
+        Usage: !stabilize @player
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        if not member:
+            await ctx.send("Usage: `!stabilize @player`")
+            return
+
+        char = campaign.get_character(str(member.id))
+        if not char:
+            await ctx.send(f"{member.display_name} doesn't have a character.")
+            return
+
+        if char.current_hp > 0:
+            await ctx.send(f"**{char.name}** is not at 0 HP — no need to stabilize.")
+            return
+
+        char.death_saves = {"successes": 0, "failures": 0}
+        # Remove unconscious condition if tracked
+        if "unconscious" in [c.lower() for c in char.conditions]:
+            char.conditions = [c for c in char.conditions if c.lower() != "unconscious"]
+        save_campaign(campaign)
+        await ctx.send(f"**{char.name}** has been stabilized. No longer making death saves.")
 
     @commands.command(name="deathsave")
     async def death_save(self, ctx: commands.Context):

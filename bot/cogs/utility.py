@@ -303,6 +303,7 @@ class UtilityCog(commands.Cog, name="Utility"):
             "commands": (
                 "`!rest short` — Short rest (spend hit dice to heal)\n"
                 "`!rest long` — Long rest (full HP, restore hit dice)\n"
+                "`!hitdie [count]` — Spend hit dice to heal (alias: `!hd`)\n"
                 "`!hp` — View your current HP\n"
                 "`!hp +5` / `!hp -3` — Heal or take damage\n"
                 "`!xp <amount>` — *(DM)* Award XP to all players\n"
@@ -310,6 +311,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!levelup` — Level up (if you have enough XP)\n"
                 "`!inspiration @player` — *(DM)* Grant inspiration\n"
                 "`!deathsave` — Roll a death saving throw\n"
+                "`!stabilize @player` — Stabilize an unconscious character\n"
                 "`!feat` — List your feats\n"
                 "`!feat add <name>` — Add a feat\n"
                 "`!feat remove <name>` — Remove a feat\n"
@@ -359,7 +361,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "roll": "dice", "rolls": "dice", "rolling": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
-        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression",
+        "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression", "hitdie": "progression", "hd": "progression", "stabilize": "progression", "deathsave": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
     }
 
