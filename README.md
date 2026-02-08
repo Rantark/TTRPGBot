@@ -210,6 +210,13 @@ Player: !pitch The Lost City | Explore ruins beneath the desert
 DM:     !selectpitch 1
 ```
 
+**Optional:** Set a starting level if you want players to begin at a higher level:
+
+```
+DM:     !setlevel 3
+Bot:    Starting level set to 3. New characters will begin at level 3.
+```
+
 ### Phase 2: Character Creation
 
 Each player runs `!createchar` in the server channel. The bot sends them a **DM** with the interactive creation prompts — keeping the process private so multiple players can create characters simultaneously without spoilers. See [Character Creation Walkthrough](#character-creation-walkthrough) below.
@@ -257,6 +264,7 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!pitches` | Anyone | View all proposed pitches |
 | `!vote <#>` | Anyone | Vote for a pitch |
 | `!selectpitch <#>` | DM | Select a pitch and move to setup phase |
+| `!setlevel <level>` | DM | Set starting level for new characters (1-20) |
 | `!startcampaign` | DM | Begin the adventure (requires at least one character) |
 | `!endcampaign` | DM | End the campaign permanently |
 | `!campaigninfo` | Anyone | View campaign status and player list |

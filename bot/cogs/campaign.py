@@ -46,6 +46,7 @@ class CampaignCog(commands.Cog, name="Campaign"):
                 f"**Campaign Created: {name}**\n"
                 f"DM: {ctx.author.display_name}\n"
                 f"Phase: **Setup** — Players can now create characters with `!createchar`\n"
+                f"DM: Use `!setlevel <level>` to set the starting level (default: 1)\n"
                 f"When everyone is ready, the DM uses `!startcampaign` to begin!"
             )
         else:
@@ -163,6 +164,30 @@ class CampaignCog(commands.Cog, name="Campaign"):
             "When everyone is ready, the DM uses `!startcampaign` to begin the adventure."
         )
 
+    @commands.command(name="setlevel")
+    async def set_level(self, ctx: commands.Context, level: int = 0):
+        """DM sets the starting level for new characters.
+
+        Usage: !setlevel 3
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel. Use `!newcampaign` first.")
+            return
+        if str(ctx.author.id) != campaign.dm_id:
+            await ctx.send("Only the DM can set the starting level.")
+            return
+        if level < 1 or level > 20:
+            await ctx.send("Starting level must be between 1 and 20.")
+            return
+
+        campaign.starting_level = level
+        save_campaign(campaign)
+        await ctx.send(
+            f"**Starting level set to {level}.**\n"
+            f"New characters created with `!createchar` will begin at level {level}."
+        )
+
     @commands.command(name="startcampaign")
     async def start_campaign(self, ctx: commands.Context):
         """DM starts the campaign — adventure begins! Requires at least one character."""
@@ -224,6 +249,8 @@ class CampaignCog(commands.Cog, name="Campaign"):
         lines.append(f"Phase: **{campaign.phase.value.title()}**")
         if campaign.dm_id:
             lines.append(f"DM: <@{campaign.dm_id}>")
+        if campaign.starting_level > 1:
+            lines.append(f"Starting Level: **{campaign.starting_level}**")
         if campaign.description:
             lines.append(f"*{campaign.description}*")
 

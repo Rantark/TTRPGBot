@@ -92,9 +92,26 @@ CLASS_SPELL_LISTS = {
             'Thunderwave', 'Unseen Servant', 'Witch Bolt',
         ],
     },
-    # Paladins and Rangers don't get spells at level 1
-    'Paladin': {'cantrips': [], 'level_1': []},
-    'Ranger': {'cantrips': [], 'level_1': []},
+    # Paladins and Rangers get spells at level 2+
+    'Paladin': {
+        'cantrips': [],
+        'level_1': [
+            'Bless', 'Command', 'Compelled Duel', 'Cure Wounds',
+            'Detect Evil and Good', 'Detect Magic', 'Detect Poison and Disease',
+            'Divine Favor', 'Heroism', 'Protection from Evil and Good',
+            'Purify Food and Drink', 'Searing Smite', 'Shield of Faith',
+            'Thunderous Smite', 'Wrathful Smite',
+        ],
+    },
+    'Ranger': {
+        'cantrips': [],
+        'level_1': [
+            'Alarm', 'Animal Friendship', 'Cure Wounds', 'Detect Magic',
+            'Detect Poison and Disease', 'Ensnaring Strike', 'Fog Cloud',
+            'Goodberry', "Hail of Thorns", 'Hunter\'s Mark', 'Jump',
+            'Longstrider', 'Speak with Animals',
+        ],
+    },
 }
 
 # How many spells each class gets at level 1
@@ -126,4 +143,6 @@ def calculate_prepared_count(char_class: str, level: int, wis_mod: int = 0, int_
         return max(1, wis_mod + level)
     elif char_class == 'Wizard':
         return max(1, int_mod + level)
+    elif char_class == 'Paladin':
+        return max(1, wis_mod + (level // 2))
     return 0

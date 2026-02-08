@@ -1,5 +1,7 @@
 """Character model for D&D 5e player characters."""
 
+import random
+
 from bot.data.rules import (
     ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS,
     modifier, modifier_str, proficiency_bonus, xp_for_next_level, calc_ac_unarmored,
@@ -97,10 +99,20 @@ class Character:
         return mod
 
     def calc_hp(self):
-        """Calculate max HP: hit_die at 1st level + CON mod * level."""
+        """Calculate max HP for current level.
+
+        Level 1: max hit die + CON mod
+        Level 2+: roll hit die (min 1) + CON mod per additional level
+        """
         con_mod = self.get_modifier("CON")
+        # Level 1: max hit die
         self.max_hp = self.hit_die + con_mod
-        # Hill Dwarf bonus
+        # Levels 2+: roll hit die for each
+        for _ in range(2, self.level + 1):
+            hp_roll = random.randint(1, self.hit_die)
+            hp_gain = max(hp_roll + con_mod, 1)
+            self.max_hp += hp_gain
+        # Hill Dwarf bonus (+1 per level)
         if self.subrace and "Hill Dwarf" in self.subrace:
             self.max_hp += self.level
         self.current_hp = self.max_hp
@@ -127,8 +139,14 @@ class Character:
             slots = get_spell_slots(self.char_class, self.level)
             self.spell_slots_max = {str(k): v for k, v in slots.items()}
 
-    def finalize(self):
-        """Call after all creation steps to compute derived stats."""
+    def finalize(self, starting_level: int = 1):
+        """Call after all creation steps to compute derived stats.
+
+        Args:
+            starting_level: The level to create the character at (default 1).
+        """
+        if starting_level > 1:
+            self.level = starting_level
         self.update_proficiency()
         self.calc_hp()
         self.calc_ac()

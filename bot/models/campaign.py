@@ -169,6 +169,8 @@ class Campaign:
         self.known_npcs: list[dict] = []  # [{"name": str, "description": str}]
         self.clues: list[str] = []
         self.session_log: list[str] = []  # Brief event log for recaps
+        # Starting level for new characters (DM can set with !setlevel)
+        self.starting_level: int = 1
         # RP scene coordination: queue actions until all players act or pass
         self.pending_actions: dict[str, str] = {}  # player_id -> action text
         self.passed_players: list[str] = []  # player_ids who passed this round
@@ -255,6 +257,7 @@ class Campaign:
             "known_npcs": self.known_npcs,
             "clues": self.clues,
             "session_log": self.session_log,
+            "starting_level": self.starting_level,
             "pending_actions": self.pending_actions,
             "passed_players": self.passed_players,
         }
@@ -276,6 +279,7 @@ class Campaign:
         c.known_npcs = data.get("known_npcs", [])
         c.clues = data.get("clues", [])
         c.session_log = data.get("session_log", [])
+        c.starting_level = data.get("starting_level", 1)
         c.pending_actions = data.get("pending_actions", {})
         c.passed_players = data.get("passed_players", [])
         return c

@@ -213,6 +213,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!pitches` — View all pitches\n"
                 "`!vote <#>` — Vote for a pitch\n"
                 "`!selectpitch <#>` — DM selects a pitch\n"
+                "`!setlevel <level>` — *(DM)* Set starting level for new characters\n"
                 "`!startcampaign` — DM begins the adventure\n"
                 "`!endcampaign` — DM ends the campaign\n"
                 "`!campaigninfo` — View campaign status"

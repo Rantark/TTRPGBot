@@ -220,13 +220,18 @@ class CharacterCog(commands.Cog, name="Character"):
             "char": char,
             "channel_id": str(ctx.channel.id),
             "guild_id": ctx.guild.id,
+            "starting_level": campaign.starting_level,
         }
         _set_session(ctx.author.id, session)
 
         try:
+            level_note = ""
+            if campaign.starting_level > 1:
+                level_note = f"\nThis campaign starts at **level {campaign.starting_level}**! Your character will be created at that level.\n"
             await ctx.author.send(
                 "**Character Creation**\n"
-                "Let's build your character step by step.\n\n"
+                "Let's build your character step by step.\n"
+                f"{level_note}\n"
                 "**Step 1: Name**\n"
                 "What is your character's name?\n"
                 "Reply with: `!cc <name>`\n"
@@ -888,43 +893,84 @@ class CharacterCog(commands.Cog, name="Character"):
     # ------------------------------------------------------------------
 
     async def _advance_to_spells(self, ctx, session, char: Character):
-        """Check if class gets spells at level 1, and set up spell selection."""
+        """Check if class gets spells and set up spell selection.
+
+        At level 1, Paladins/Rangers don't get spells.
+        At level 2+, they do — so we check the campaign's starting level.
+        """
         # Assign weapons to character
         char.weapons = session.get("weapon_picks", [])
 
+        starting_level = session.get("starting_level", 1)
         spell_info = CLASS_STARTING_SPELLS.get(char.char_class)
         spell_list = CLASS_SPELL_LISTS.get(char.char_class)
 
-        # Non-casters or classes that don't get spells at level 1
-        if not spell_info or spell_info['spell_type'] == 'none' or spell_info['cantrips'] == 0:
+        # Determine if this class gets spells at the starting level
+        is_half_caster = char.char_class in ('Paladin', 'Ranger')
+        has_spells = False
+
+        if spell_info and spell_list:
+            if spell_info['spell_type'] != 'none':
+                has_spells = True
+            elif is_half_caster and starting_level >= 2:
+                # Half-casters gain spells at level 2
+                has_spells = True
+
+        if not has_spells:
             await self._advance_to_backstory(ctx, session, char)
             return
 
-        # Set up cantrip selection
-        session["cantrips_needed"] = spell_info['cantrips']
-        session["cantrips_available"] = list(spell_list['cantrips'])
-        session["cantrips_picked"] = []
+        # Determine cantrips needed
+        cantrips_count = spell_info['cantrips']
+        if cantrips_count > 0 and spell_list.get('cantrips'):
+            session["cantrips_needed"] = cantrips_count
+            session["cantrips_available"] = list(spell_list['cantrips'])
+            session["cantrips_picked"] = []
+        else:
+            session["cantrips_needed"] = 0
+            session["cantrips_available"] = []
+            session["cantrips_picked"] = []
 
         # Calculate spells needed
-        if spell_info['spell_type'] == 'known':
+        effective_level = starting_level
+        if is_half_caster and starting_level >= 2:
+            # Half-casters: Paladin uses WIS, Ranger uses known spells
+            if char.char_class == 'Paladin':
+                wis_mod = modifier(char.abilities.get("WIS", 10))
+                session["spells_needed"] = max(1, wis_mod + (effective_level // 2))
+                session["spell_type"] = "prepared"
+            else:
+                # Ranger: known spells — 2 at level 2, +1 per level after
+                session["spells_needed"] = 2 + max(0, effective_level - 2)
+                session["spell_type"] = "known"
+        elif spell_info['spell_type'] == 'known':
             session["spells_needed"] = spell_info['spells']
         elif spell_info['spell_type'] == 'prepared':
             wis_mod = modifier(char.abilities.get("WIS", 10))
             int_mod = modifier(char.abilities.get("INT", 10))
-            session["spells_needed"] = calculate_prepared_count(char.char_class, 1, wis_mod, int_mod)
+            session["spells_needed"] = calculate_prepared_count(char.char_class, effective_level, wis_mod, int_mod)
         elif spell_info['spell_type'] == 'spellbook':
             session["spells_needed"] = spell_info['spells']  # 6 for wizard
         else:
             session["spells_needed"] = 0
 
+        if not is_half_caster:
+            session["spell_type"] = spell_info['spell_type']
+
         session["spells_available"] = list(spell_list['level_1'])
         session["spells_picked"] = []
-        session["spell_type"] = spell_info['spell_type']
 
-        session["step"] = "spells_cantrips"
-        _set_session(ctx.author.id, session)
-
-        await self._show_cantrip_choice(ctx, session, char)
+        # If there are cantrips to pick, start there; otherwise go to level 1 spells
+        if session["cantrips_needed"] > 0:
+            session["step"] = "spells_cantrips"
+            _set_session(ctx.author.id, session)
+            await self._show_cantrip_choice(ctx, session, char)
+        elif session["spells_needed"] > 0 and session["spells_available"]:
+            session["step"] = "spells_level1"
+            _set_session(ctx.author.id, session)
+            await self._show_spell_choice(ctx, session, char)
+        else:
+            await self._advance_to_backstory(ctx, session, char)
 
     async def _show_cantrip_choice(self, ctx, session, char: Character):
         needed = session["cantrips_needed"]
@@ -1044,6 +1090,7 @@ class CharacterCog(commands.Cog, name="Character"):
         cantrips = session.get("cantrips_picked", [])
         spells = session.get("spells_picked", [])
         spell_type = session.get("spell_type", "known")
+        starting_level = session.get("starting_level", 1)
 
         char.cantrips = cantrips
 
@@ -1052,16 +1099,15 @@ class CharacterCog(commands.Cog, name="Character"):
             # Known casters have all their spells "prepared" automatically
             char.prepared_spells = list(spells)
         elif spell_type == "prepared":
-            # Cleric/Druid: know all class spells, prepare a subset
+            # Cleric/Druid/Paladin: know all class spells, prepare a subset
             char.known_spells = list(session.get("spells_available", []))
             char.prepared_spells = spells
         elif spell_type == "spellbook":
             # Wizard: spellbook holds known spells, prepare a subset
-            char.known_spells = spells
-            # At creation, all spellbook spells are prepared
             wis_mod = modifier(char.abilities.get("WIS", 10))
             int_mod = modifier(char.abilities.get("INT", 10))
-            num_prepared = calculate_prepared_count(char.char_class, 1, wis_mod, int_mod)
+            num_prepared = calculate_prepared_count(char.char_class, starting_level, wis_mod, int_mod)
+            char.known_spells = spells
             char.prepared_spells = spells[:num_prepared]
 
         await self._advance_to_backstory(ctx, session, char)
@@ -1086,8 +1132,9 @@ class CharacterCog(commands.Cog, name="Character"):
         if choice.strip().lower() != "skip":
             char.backstory = choice.strip()
 
-        # Finalize character
-        char.finalize()
+        # Finalize character at the campaign's starting level
+        starting_level = session.get("starting_level", 1)
+        char.finalize(starting_level=starting_level)
 
         session["step"] = "confirm"
         _set_session(ctx.author.id, session)
