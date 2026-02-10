@@ -20,7 +20,11 @@ def _campaign_path(channel_id: str) -> str:
 
 
 def save_campaign(campaign: Campaign):
-    """Save a campaign to disk."""
+    """Save a campaign to disk.
+
+    If the campaign has a thread_id, also saves under that ID so commands
+    in the thread can find it directly without scanning.
+    """
     _ensure_dir()
     path = _campaign_path(campaign.channel_id)
     try:
@@ -30,12 +34,24 @@ def save_campaign(campaign: Campaign):
         with open(tmp_path, "w") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, path)
+
+        # Also save under thread_id for direct lookup from thread commands
+        if campaign.thread_id and campaign.thread_id != campaign.channel_id:
+            thread_path = _campaign_path(campaign.thread_id)
+            tmp_path = thread_path + ".tmp"
+            with open(tmp_path, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, thread_path)
     except Exception:
         logger.exception(f"Failed to save campaign for channel {campaign.channel_id}")
 
 
 def load_campaign(channel_id: str) -> Campaign | None:
-    """Load a campaign from disk. Returns None if not found."""
+    """Load a campaign from disk.
+
+    Works for both regular channel IDs and thread IDs since campaigns
+    with threads are saved under both their channel_id and thread_id.
+    """
     path = _campaign_path(channel_id)
     if not os.path.exists(path):
         return None

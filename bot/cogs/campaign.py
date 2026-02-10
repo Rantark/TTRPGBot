@@ -1,5 +1,8 @@
 """Campaign management cog: pitch, vote, setup, start, end."""
 
+import asyncio
+import re
+
 import discord
 from discord.ext import commands
 
@@ -275,7 +278,10 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
     @commands.command(name="startcampaign")
     async def start_campaign(self, ctx: commands.Context):
-        """DM starts the campaign — adventure begins! Requires at least one character."""
+        """DM starts the campaign — creates a game thread and begins the adventure!
+
+        Requires at least one character.
+        """
         campaign = self._get_campaign(ctx)
         if not campaign:
             await ctx.send("No campaign in this channel. Use `!newcampaign` to create one.")
@@ -295,21 +301,54 @@ class CampaignCog(commands.Cog, name="Campaign"):
             await ctx.send("No completed characters yet! Players need to finish `!createchar` first.")
             return
 
+        # Create a game thread for the campaign
+        thread = None
+        if not isinstance(ctx.channel, discord.Thread):
+            try:
+                thread_name = campaign.name or "D&D Campaign"
+                thread = await ctx.channel.create_thread(
+                    name=thread_name,
+                    type=discord.ChannelType.public_thread,
+                    reason=f"D&D Campaign: {thread_name}",
+                )
+                campaign.thread_id = str(thread.id)
+                campaign.parent_channel_id = str(ctx.channel.id)
+            except discord.Forbidden:
+                # No thread permissions — fall back to playing in the channel
+                pass
+
         campaign.phase = CampaignPhase.ACTIVE
         save_campaign(campaign)
 
         # Get opening narration from Claude
         dm_engine = self.bot.dm_engine
+        target = thread or ctx.channel
+
+        if thread:
+            # Announce in the main channel
+            player_mentions = ", ".join(f"<@{pid}>" for pid in campaign.characters.keys())
+            await ctx.send(
+                f"**{campaign.name}** has begun!\n"
+                f"All gameplay will happen in {thread.mention}\n"
+                f"Players: {player_mentions}"
+            )
+            # Welcome message in thread
+            await thread.send(
+                f"**Welcome to {campaign.name}!**\n"
+                f"DM: <@{campaign.dm_id}>\n"
+                f"All commands (`!action`, `!roll`, etc.) should be used in this thread.\n"
+            )
+
         async with ctx.typing():
             narration = await dm_engine.narrate_start(campaign)
         save_campaign(campaign)
 
-        # Split long messages for Discord's 2000 char limit
-        await self._send_long(ctx, narration)
+        # Send narration to thread (or channel if no thread)
+        await self._send_long_to(target, narration)
 
     @commands.command(name="endcampaign")
     async def end_campaign(self, ctx: commands.Context):
-        """DM ends the campaign permanently."""
+        """DM ends the campaign permanently. Archives the game thread if one exists."""
         campaign = self._get_campaign(ctx)
         if not campaign:
             await ctx.send("No campaign in this channel.")
@@ -319,8 +358,188 @@ class CampaignCog(commands.Cog, name="Campaign"):
             return
 
         name = campaign.name or "Unnamed Campaign"
+
+        # Delete campaign data (both channel and thread save files)
         delete_campaign(str(ctx.channel.id))
+        if campaign.thread_id and campaign.thread_id != str(ctx.channel.id):
+            delete_campaign(campaign.thread_id)
+        if campaign.parent_channel_id and campaign.parent_channel_id != str(ctx.channel.id):
+            delete_campaign(campaign.parent_channel_id)
+
         await ctx.send(f"**{name}** has ended. The tale is concluded.\nUse `!newcampaign` to start a new adventure.")
+
+        # Archive the thread if we're in one
+        if isinstance(ctx.channel, discord.Thread):
+            try:
+                await ctx.channel.edit(archived=True)
+            except discord.Forbidden:
+                pass
+
+            # Also notify the parent channel
+            if campaign.parent_channel_id:
+                try:
+                    parent = self.bot.get_channel(int(campaign.parent_channel_id))
+                    if parent:
+                        await parent.send(f"**{name}** has ended. The game thread has been archived.")
+                except Exception:
+                    pass
+
+    @commands.command(name="suggestcampaign")
+    async def suggest_campaign(self, ctx: commands.Context):
+        """Ask Claude to suggest campaign ideas based on your play style.
+
+        Usage: !suggestcampaign
+        """
+        existing = self._get_campaign(ctx)
+        if existing and existing.phase != CampaignPhase.NONE:
+            await ctx.send("There's already an active campaign in this channel. "
+                           "Use `!endcampaign` to end it first.")
+            return
+
+        # Ask for style preference
+        msg = await ctx.send(
+            "**Campaign Suggestions**\n\n"
+            "What kind of campaign are you interested in?\n\n"
+            "1. **Combat-Focused** — Battles and tactical encounters\n"
+            "2. **Roleplay-Heavy** — Political intrigue, social encounters\n"
+            "3. **Mystery/Investigation** — Solve crimes, uncover conspiracies\n"
+            "4. **Exploration** — Discover new lands, dungeon crawling\n"
+            "5. **Surprise Me** — Let Claude decide!\n\n"
+            "React with a number or type `1`-`5`"
+        )
+
+        emojis = ["1\u20e3", "2\u20e3", "3\u20e3", "4\u20e3", "5\u20e3"]
+        for emoji in emojis:
+            await msg.add_reaction(emoji)
+
+        style_map = {
+            "1\u20e3": "combat-focused with lots of battles and tactical encounters",
+            "2\u20e3": "roleplay-heavy with political intrigue and social encounters",
+            "3\u20e3": "mystery and investigation focused on solving crimes and uncovering secrets",
+            "4\u20e3": "exploration-focused with dungeon crawling and discovering new lands",
+            "5\u20e3": "a balanced mix of all elements — surprise me with something unique",
+        }
+
+        # Wait for reaction or message
+        def check_reaction(reaction, user):
+            return (
+                user == ctx.author
+                and str(reaction.emoji) in emojis
+                and reaction.message.id == msg.id
+            )
+
+        def check_message(m):
+            return (
+                m.author == ctx.author
+                and m.channel == ctx.channel
+                and m.content.strip() in ("1", "2", "3", "4", "5")
+            )
+
+        style = None
+        done, pending = await asyncio.wait(
+            [
+                asyncio.ensure_future(self.bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)),
+                asyncio.ensure_future(self.bot.wait_for("message", timeout=60.0, check=check_message)),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+        try:
+            result = done.pop().result()
+            if isinstance(result, tuple):
+                # Reaction
+                reaction, _ = result
+                style = style_map.get(str(reaction.emoji))
+            else:
+                # Message
+                idx = int(result.content.strip()) - 1
+                style = list(style_map.values())[idx]
+        except (asyncio.TimeoutError, Exception):
+            await ctx.send("Campaign suggestion timed out. Try again with `!suggestcampaign`.")
+            return
+
+        if not style:
+            await ctx.send("Invalid choice.")
+            return
+
+        # Generate suggestions from Claude
+        await ctx.send("Claude is brainstorming campaign ideas...")
+
+        prompt = (
+            f"Generate 3 D&D 5e campaign concepts that are {style}.\n\n"
+            "For each campaign, provide:\n"
+            "- A compelling title (3-6 words)\n"
+            "- A 2-3 sentence hook that makes players want to join\n"
+            "- Suggested starting level (1-5)\n\n"
+            "Format as:\n\n"
+            "**1. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
+            "**2. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
+            "**3. [Title]**\n[Hook]\n*Starting Level: [level]*"
+        )
+
+        async with ctx.typing():
+            suggestions = await self.bot.dm_engine.generate_simple_response(prompt)
+
+        suggestion_msg = await ctx.send(
+            f"**Campaign Suggestions:**\n\n"
+            f"{suggestions}\n\n"
+            "React with 1\u20e3, 2\u20e3, or 3\u20e3 to start that campaign, "
+            "or use `!newcampaign <name>` to create your own."
+        )
+
+        pick_emojis = ["1\u20e3", "2\u20e3", "3\u20e3"]
+        for emoji in pick_emojis:
+            await suggestion_msg.add_reaction(emoji)
+
+        def check_pick(reaction, user):
+            return (
+                user == ctx.author
+                and str(reaction.emoji) in pick_emojis
+                and reaction.message.id == suggestion_msg.id
+            )
+
+        try:
+            reaction, _ = await self.bot.wait_for("reaction_add", timeout=120.0, check=check_pick)
+        except asyncio.TimeoutError:
+            await ctx.send("Campaign selection timed out. Use `!newcampaign <name>` to create one manually.")
+            return
+
+        choice = pick_emojis.index(str(reaction.emoji))
+
+        # Extract title from suggestions
+        titles = re.findall(r'\*\*\d+\.\s*(.+?)\*\*', suggestions)
+        if len(titles) > choice:
+            campaign_name = titles[choice].strip()
+        else:
+            campaign_name = f"Campaign {choice + 1}"
+
+        # Extract starting level if mentioned
+        levels = re.findall(r'\*Starting Level:\s*(\d+)\*', suggestions)
+        starting_level = 1
+        if len(levels) > choice:
+            try:
+                starting_level = max(1, min(20, int(levels[choice])))
+            except ValueError:
+                pass
+
+        # Create the campaign
+        campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id))
+        campaign.dm_id = str(ctx.author.id)
+        campaign.name = campaign_name
+        campaign.phase = CampaignPhase.SETUP
+        campaign.starting_level = starting_level
+        save_campaign(campaign)
+
+        level_note = f"\nStarting Level: **{starting_level}**" if starting_level > 1 else ""
+        await ctx.send(
+            f"**Campaign Created: {campaign_name}**\n"
+            f"DM: {ctx.author.display_name}{level_note}\n"
+            f"Phase: **Setup** — Players can now create characters with `!createchar`\n"
+            f"When everyone is ready, the DM uses `!startcampaign` to begin!"
+        )
 
     @commands.command(name="campaigninfo")
     async def campaign_info(self, ctx: commands.Context):
@@ -336,6 +555,8 @@ class CampaignCog(commands.Cog, name="Campaign"):
             lines.append(f"DM: <@{campaign.dm_id}>")
         if campaign.starting_level > 1:
             lines.append(f"Starting Level: **{campaign.starting_level}**")
+        if campaign.thread_id:
+            lines.append(f"Game Thread: <#{campaign.thread_id}>")
         if campaign.description:
             lines.append(f"*{campaign.description}*")
 
@@ -352,16 +573,19 @@ class CampaignCog(commands.Cog, name="Campaign"):
         await ctx.send("\n".join(lines))
 
     async def _send_long(self, ctx: commands.Context, text: str):
-        """Send a message, splitting if it exceeds Discord's limit."""
+        """Send a message to ctx, splitting if it exceeds Discord's limit."""
+        await self._send_long_to(ctx, text)
+
+    async def _send_long_to(self, target, text: str):
+        """Send a message to any channel/thread, splitting if it exceeds Discord's limit."""
         while len(text) > 1990:
-            # Find a good split point
             split_at = text.rfind("\n", 0, 1990)
             if split_at == -1:
                 split_at = 1990
-            await ctx.send(text[:split_at])
+            await target.send(text[:split_at])
             text = text[split_at:].lstrip("\n")
         if text:
-            await ctx.send(text)
+            await target.send(text)
 
 
 async def setup(bot: commands.Bot):

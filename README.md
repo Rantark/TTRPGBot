@@ -43,7 +43,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 
 - **AI Dungeon Master** — Claude narrates the story, roleplays NPCs, manages encounters, and adjudicates rules
 - **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, weapon selection, spell/cantrip selection for casters, backstory. **Private DM-based flow** so multiple players can create simultaneously with step-by-step help text
-- **Campaign System** — Pitch/vote on concepts, setup phase for character creation, DM-controlled start
+- **Campaign System** — Pitch/vote on concepts, `!suggestcampaign` for AI-generated ideas, setup phase for character creation, game threads to keep campaigns organized
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
 - **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
 - **Spell System** — Track spell slots, known/prepared spells, cantrips, and casting (full/half/pact casters)
@@ -210,6 +210,18 @@ Player: !pitch The Lost City | Explore ruins beneath the desert
 DM:     !selectpitch 1
 ```
 
+Or let Claude suggest ideas:
+
+```
+DM:     !suggestcampaign
+Bot:    What kind of campaign? React: 1️⃣ Combat | 2️⃣ Roleplay | 3️⃣ Mystery | 4️⃣ Exploration | 5️⃣ Surprise Me
+DM:     [reacts with 2️⃣]
+Bot:    [Claude generates 3 campaign pitches focused on roleplay]
+        React 1️⃣/2️⃣/3️⃣ to select, or !newcampaign to create your own.
+DM:     [reacts with 1️⃣]
+Bot:    Campaign Created: The Masquerade of Mirrors
+```
+
 **Optional:** Set a starting level if you want players to begin at a higher level:
 
 ```
@@ -225,8 +237,11 @@ Each player runs `!createchar` in the server channel. The bot sends them a **DM*
 
 ```
 DM:     !startcampaign
-Bot:    [Claude generates an epic opening narration, addressing each character by name]
+Bot:    Campaign has begun! All gameplay will happen in #🎲-Curse-of-the-Crimson-Keep
+        [Claude generates an epic opening narration in the new game thread]
 ```
+
+The bot creates a **Discord thread** for the campaign. All gameplay (`!action`, `!roll`, etc.) happens in the thread, keeping the main channel clean. When the campaign ends, the thread is archived.
 
 ### Phase 4: Play
 
@@ -260,6 +275,7 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | Command | Who | Description |
 |---|---|---|
 | `!newcampaign [name]` | Anyone | Create a new campaign (you become the DM) |
+| `!suggestcampaign` | Anyone | Ask Claude to suggest campaign ideas (react to select) |
 | `!pitch <title> \| <desc>` | Anyone | Propose a campaign concept |
 | `!pitches` | Anyone | View all proposed pitches |
 | `!vote <#>` | Anyone | Vote for a pitch |
@@ -267,8 +283,8 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!setlevel <level>` | DM | Set starting level for new characters (1-20) |
 | `!loot @player <item>` | DM | Give item/gold to a player's inventory |
 | `!giveall <item>` | DM | Give item/gold to all players |
-| `!startcampaign` | DM | Begin the adventure (requires at least one character) |
-| `!endcampaign` | DM | End the campaign permanently |
+| `!startcampaign` | DM | Begin the adventure — creates a game thread |
+| `!endcampaign` | DM | End the campaign — archives the game thread |
 | `!campaigninfo` | Anyone | View campaign status and player list |
 
 ### Character Creation & Sheets
@@ -402,7 +418,7 @@ Spell slots are tracked per D&D 5e rules: full casters (Bard, Cleric, Druid, Sor
 | `!npcs add <name> \| <desc>` | Add an NPC to the journal |
 | `!npcs remove <#>` | Remove an NPC |
 | `!whisper <msg>` | Private message to the DM (sent via Discord DM) |
-| `!commands [category]` | Show help menu (campaign, character, gameplay, dice, combat, progression, spells, utility) |
+| `!commands [category]` | Show help menu via DM (campaign, character, gameplay, dice, combat, progression, spells, utility) |
 
 ---
 

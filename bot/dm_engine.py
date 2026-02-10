@@ -504,6 +504,24 @@ class DMEngine:
             logger.exception("Error generating recap")
             return f"*The chronicler's quill falters...* (Error: {type(e).__name__})"
 
+    async def generate_simple_response(self, prompt: str) -> str:
+        """Generate a simple response from Claude without campaign context.
+
+        Used for campaign suggestions, rules questions outside campaigns, etc.
+        """
+        try:
+            import asyncio
+            response = await asyncio.to_thread(
+                self.client.messages.create,
+                model=self.model,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
+        except Exception as e:
+            logger.exception("Error generating simple response")
+            return f"*The DM's crystal ball flickers...* (Error: {type(e).__name__})"
+
     async def narrate_start(self, campaign: Campaign) -> str:
         """Generate the opening narration for a campaign."""
         system = _build_system_blocks(

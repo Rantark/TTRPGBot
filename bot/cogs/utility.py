@@ -216,8 +216,9 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!setlevel <level>` — *(DM)* Set starting level for new characters\n"
                 "`!loot @player <item>` — *(DM)* Give item/gold to a player\n"
                 "`!giveall <item>` — *(DM)* Give item/gold to all players\n"
-                "`!startcampaign` — DM begins the adventure\n"
-                "`!endcampaign` — DM ends the campaign\n"
+                "`!suggestcampaign` — Ask Claude to suggest campaign ideas\n"
+                "`!startcampaign` — DM begins the adventure (creates game thread)\n"
+                "`!endcampaign` — DM ends the campaign (archives thread)\n"
                 "`!campaigninfo` — View campaign status"
             ),
         },
@@ -355,7 +356,7 @@ class UtilityCog(commands.Cog, name="Utility"):
 
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
-        "camp": "campaign", "campaigns": "campaign",
+        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice",
@@ -367,7 +368,7 @@ class UtilityCog(commands.Cog, name="Utility"):
 
     @commands.command(name="commands")
     async def command_list(self, ctx: commands.Context, *, category: str = ""):
-        """Show available commands. Use !commands <category> for details.
+        """Show available commands (sent via DM to keep game chat clean).
 
         Usage: !commands
         Usage: !commands combat
@@ -384,23 +385,34 @@ class UtilityCog(commands.Cog, name="Utility"):
             for key, cat in self.HELP_CATEGORIES.items():
                 lines.append(f"> **{cat['title']}** — `!commands {key}`")
             lines.append("\n*Example:* `!commands gameplay`, `!commands combat`, `!commands dice`")
-            await ctx.send("\n".join(lines))
-            return
+            help_text = "\n".join(lines)
+        else:
+            # Resolve alias
+            resolved = self.CATEGORY_ALIASES.get(category, category)
 
-        # Resolve alias
-        resolved = self.CATEGORY_ALIASES.get(category, category)
+            if resolved not in self.HELP_CATEGORIES:
+                valid = ", ".join(f"`{k}`" for k in self.HELP_CATEGORIES)
+                await ctx.send(f"Unknown category: `{category}`\nAvailable: {valid}")
+                return
 
-        if resolved not in self.HELP_CATEGORIES:
-            valid = ", ".join(f"`{k}`" for k in self.HELP_CATEGORIES)
-            await ctx.send(f"Unknown category: `{category}`\nAvailable: {valid}")
-            return
+            cat = self.HELP_CATEGORIES[resolved]
+            help_text = (
+                f"**{cat['title']}**\n"
+                f"*{cat['description']}*\n\n"
+                f"{cat['commands']}"
+            )
 
-        cat = self.HELP_CATEGORIES[resolved]
-        await ctx.send(
-            f"**{cat['title']}**\n"
-            f"*{cat['description']}*\n\n"
-            f"{cat['commands']}"
-        )
+        # Send via DM to keep game chat clean
+        if isinstance(ctx.channel, discord.DMChannel):
+            # Already in DMs, just send here
+            await ctx.send(help_text)
+        else:
+            try:
+                await ctx.author.send(help_text)
+                await ctx.send(f"{ctx.author.mention} Command help sent to your DMs!")
+            except discord.Forbidden:
+                # DMs disabled — fall back to channel
+                await ctx.send(help_text)
 
 
 async def setup(bot: commands.Bot):
