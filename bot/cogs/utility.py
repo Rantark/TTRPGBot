@@ -352,6 +352,19 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!commands` — This help menu"
             ),
         },
+        "botinfo": {
+            "title": "Bot Info & Admin",
+            "description": "Bot status, version info, and owner-only controls.",
+            "commands": (
+                "`!ping` — Check bot latency and status\n"
+                "`!version` — Show version info and release notes (aliases: `!v`, `!ver`)\n"
+                "`!botinfo` — Detailed bot statistics (aliases: `!about`, `!info`)\n"
+                "`!checkupdate` — *(Owner)* Check for updates on GitHub\n"
+                "`!restart` — *(Owner)* Restart the bot\n"
+                "`!update` — *(Owner)* Pull updates from GitHub and restart\n"
+                "`!shutdown` — *(Owner)* Shut down the bot (alias: `!stop`)"
+            ),
+        },
     }
 
     # Aliases so users can type partial names
@@ -364,6 +377,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
         "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression", "hitdie": "progression", "hd": "progression", "stabilize": "progression", "deathsave": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
+        "bot": "botinfo", "ping": "botinfo", "version": "botinfo", "about": "botinfo", "info": "botinfo", "admin": "botinfo", "restart": "botinfo", "update": "botinfo", "shutdown": "botinfo",
     }
 
     @commands.command(name="commands")

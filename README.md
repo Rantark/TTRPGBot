@@ -24,6 +24,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
   - [Progression & Resources](#progression--resources)
   - [Spells & Spellcasting](#spells--spellcasting)
   - [Utility](#utility)
+  - [Bot Info & Admin](#bot-info--admin)
 - [Character Creation Walkthrough](#character-creation-walkthrough)
 - [RP Scene Coordination](#rp-scene-coordination)
 - [Combat System & Tactical Map](#combat-system--tactical-map)
@@ -38,6 +39,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - [Advantage & Disadvantage](#advantage--disadvantage)
 - [Quick Stat Commands](#quick-stat-commands)
 - [Fuzzy Matching & Error Messages](#fuzzy-matching--error-messages)
+- [Auto-Update & Restart System](#auto-update--restart-system)
 - [Prompt Caching (Cost Savings)](#prompt-caching-cost-savings)
 - [Environment Variables](#environment-variables)
 - [Project Structure](#project-structure)
@@ -65,6 +67,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - **Game Threads** — Each campaign gets its own Discord thread to keep gameplay organized and separate from other chat
 - **`!commands` via DM** — Help text is sent to your DMs to keep game chat clean
 - **Prompt Caching** — Anthropic prompt caching reduces API costs by up to 90% on repeat calls
+- **Auto-Update System** — Background update checker (every 24 hours), `!update` to pull from GitHub and restart, `!restart`/`!shutdown` owner commands, version tracking
 - **Persistent Storage** — Campaigns save to JSON files, survive bot restarts
 - **Async-Friendly** — Designed for play-by-post (3-6 players responding over hours or days)
 
@@ -181,11 +184,26 @@ In the **Bot** tab, scroll down to **Privileged Gateway Intents** and enable:
 
 ## Running the Bot
 
+**Basic start (no restart/update support):**
+
 ```cmd
 python -m bot.main
 ```
 
-The bot will appear online in your Discord server with the status **"Playing D&D 5e | !commands"**.
+**With restart/update support (recommended):**
+
+```cmd
+# Windows
+start.bat
+
+# Linux/Mac
+chmod +x start.sh update.sh
+./start.sh
+```
+
+The wrapper scripts enable `!restart`, `!update`, and `!shutdown` commands from Discord. They create a `.wrapper_active` marker file so the bot knows it can restart itself.
+
+The bot will appear online in your Discord server with the status **"Playing D&D 5e | !commands | v1.0.0"**.
 
 Type `!commands` in any channel to see the category menu.
 
@@ -433,7 +451,21 @@ Spell slots are tracked per D&D 5e rules: full casters (Bard, Cleric, Druid, Sor
 | `!npcs add <name> \| <desc>` | Add an NPC to the journal |
 | `!npcs remove <#>` | Remove an NPC |
 | `!whisper <msg>` | Private message to the DM (sent via Discord DM) |
-| `!commands [category]` | Show help menu via DM (campaign, character, gameplay, dice, combat, progression, spells, utility) |
+| `!commands [category]` | Show help menu via DM (campaign, character, gameplay, dice, combat, progression, spells, utility, botinfo) |
+
+### Bot Info & Admin
+
+| Command | Description |
+|---|---|
+| `!ping` | Check bot latency and status |
+| `!version` (`!v`, `!ver`) | Show version info and release notes |
+| `!botinfo` (`!about`, `!info`) | Detailed bot statistics (uptime, memory, server count) |
+| `!checkupdate` | *(Owner only)* Check GitHub for new versions |
+| `!restart` | *(Owner only)* Restart the bot (requires wrapper script) |
+| `!update` | *(Owner only)* Pull updates from GitHub and restart |
+| `!shutdown` (`!stop`) | *(Owner only)* Shut down the bot completely |
+
+> Owner-only commands use Discord.py's `is_owner()` check, which verifies against `BOT_OWNER_ID` in your `.env` file.
 
 ---
 
@@ -1272,6 +1304,42 @@ Bot:     Describe what your character does.
 
 ---
 
+## Auto-Update & Restart System
+
+TTRPGBot includes a built-in update and restart system that can be controlled from Discord.
+
+### How It Works
+
+1. **Version tracking** — `bot/version.py` stores the current version number (semver)
+2. **Background checker** — Every 24 hours, the bot fetches the latest `bot/version.py` from GitHub and compares versions
+3. **Owner notifications** — If a newer version is found, the bot DMs the owner
+4. **Discord commands** — `!update` pulls latest code and restarts; `!restart` restarts without updating; `!shutdown` stops the bot
+
+### Wrapper Scripts
+
+The `!restart` and `!update` commands require the bot to be started with a wrapper script:
+
+- **Windows:** `start.bat`
+- **Linux/Mac:** `start.sh` (run `chmod +x start.sh update.sh` first)
+
+The wrapper script monitors the bot's exit code:
+- **Exit 0** — Normal shutdown, wrapper exits
+- **Exit 42** — Restart requested, wrapper restarts the bot
+- **Exit 43** — Update requested, wrapper runs the update script then restarts
+
+A `.wrapper_active` marker file is created when running through the wrapper. If this file doesn't exist, `!restart`/`!update` will show instructions instead.
+
+### Setting Up Owner Commands
+
+1. Add your Discord user ID to `.env`:
+   ```
+   BOT_OWNER_ID=123456789012345678
+   ```
+2. To find your ID: Enable Developer Mode in Discord settings, right-click yourself, select "Copy User ID"
+3. Owner-only commands: `!checkupdate`, `!restart`, `!update`, `!shutdown`
+
+---
+
 ## Prompt Caching (Cost Savings)
 
 The bot uses [Anthropic's prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to dramatically reduce API costs. Three cache breakpoints are placed strategically:
@@ -1300,6 +1368,7 @@ Cache stats — read: 3200, created: 150, uncached: 85, output: 312
 |---|---|---|---|
 | `DISCORD_TOKEN` | Yes | — | Your Discord bot token |
 | `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
+| `BOT_OWNER_ID` | No | — | Your Discord user ID (enables owner-only commands) |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Which Claude model to use |
 | `COMMAND_PREFIX` | No | `!` | Bot command prefix |
 
@@ -1310,7 +1379,9 @@ Cache stats — read: 3200, created: 150, uncached: 85, output: 312
 ```
 TTRPGBot/
 ├── bot/
-│   ├── main.py              # Entry point — bot setup, event handlers, error handling
+│   ├── main.py              # Entry point — bot setup, event handlers, shutdown, update checker
+│   ├── version.py            # Version tracking (semver) and release notes
+│   ├── update_checker.py     # Background GitHub version checker (24h interval)
 │   ├── dm_engine.py          # Claude AI DM — API calls, prompt caching, action tag parser
 │   ├── dice.py               # Dice rolling engine (notation parsing, ability checks, adv/dis)
 │   ├── storage.py            # Persistent JSON file storage per campaign
@@ -1321,7 +1392,8 @@ TTRPGBot/
 │   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
 │   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !stabilize, !hitdie, !feat, !modifier
 │   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
-│   │   └── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands (via DM)
+│   │   ├── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands (via DM)
+│   │   └── info.py           # !ping, !version, !botinfo, !restart, !update, !shutdown
 │   ├── models/
 │   │   ├── character.py      # Character class — stats, abilities, spells, weapons, serialization
 │   │   └── campaign.py       # Campaign, CombatState, CombatMap, RP queue state
@@ -1339,6 +1411,10 @@ TTRPGBot/
 │       └── consumables.py    # Consumable items (healing potions, antitoxin)
 ├── data/
 │   └── campaigns/            # Auto-created — JSON save files live here
+├── start.bat                 # Windows wrapper script (enables !restart/!update)
+├── start.sh                  # Linux/Mac wrapper script (enables !restart/!update)
+├── update.bat                # Windows auto-updater (git pull + pip install)
+├── update.sh                 # Linux/Mac auto-updater (git pull + pip install)
 ├── requirements.txt          # Python dependencies
 ├── Procfile                  # Railway.app deployment config
 ├── .env.example              # Template for environment variables

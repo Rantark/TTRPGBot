@@ -3,12 +3,15 @@
 import os
 import sys
 import logging
+import asyncio
 
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
 from bot.dm_engine import DMEngine
+from bot.version import __version__
+from bot.update_checker import UpdateChecker
 
 # Load environment variables
 load_dotenv()
@@ -32,6 +35,10 @@ if not ANTHROPIC_API_KEY:
     logger.error("ANTHROPIC_API_KEY environment variable is required. See .env.example")
     sys.exit(1)
 
+# Exit codes for wrapper script
+EXIT_RESTART = 42
+EXIT_UPDATE = 43
+
 # Bot setup
 PREFIX = os.environ.get("COMMAND_PREFIX", "!")
 intents = discord.Intents.default()
@@ -39,6 +46,9 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+
+# Initialize update checker
+update_checker = UpdateChecker(bot)
 
 # Cog extensions to load
 EXTENSIONS = [
@@ -49,14 +59,30 @@ EXTENSIONS = [
     "bot.cogs.progression",
     "bot.cogs.spells",
     "bot.cogs.utility",
+    "bot.cogs.info",
 ]
+
+
+async def shutdown(exit_code=0):
+    """Gracefully shutdown the bot with specified exit code."""
+    print(f"\n[SHUTDOWN] Shutting down with exit code {exit_code}...")
+
+    print("[SHUTDOWN] Closing bot connection...")
+    await bot.close()
+
+    print("[SHUTDOWN] Shutdown complete.")
+    sys.exit(exit_code)
 
 
 @bot.event
 async def on_ready():
-    logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    logger.info(f"Connected to {len(bot.guilds)} guild(s)")
-    logger.info(f"Command prefix: {PREFIX}")
+    print(f'{"=" * 42}')
+    print(f'  TTRPGBot v{__version__}')
+    print(f'{"=" * 42}')
+    print(f'  Logged in as: {bot.user.name}')
+    print(f'  Bot ID: {bot.user.id}')
+    print(f'  Servers: {len(bot.guilds)}')
+    print(f'{"=" * 42}')
 
     # Initialize the DM engine
     try:
@@ -74,10 +100,17 @@ async def on_ready():
         except Exception as e:
             logger.error(f"Failed to load extension {ext}: {e}")
 
+    # Set bot status to show version
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.playing, name="D&D 5e | !commands")
+        activity=discord.Game(name=f"D&D 5e | !commands | v{__version__}")
     )
-    logger.info("Bot is ready!")
+
+    # Start update checker
+    update_checker.start()
+
+    print(f'  Bot is ready!')
+    print(f'  Update checker: Running')
+    print(f'{"=" * 42}\n')
 
 
 @bot.event
@@ -91,6 +124,9 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.BadArgument):
         await ctx.send(f"Invalid argument. Check `!commands` for usage.")
         return
+    if isinstance(error, commands.NotOwner):
+        await ctx.send("This command is restricted to the bot owner.")
+        return
     if isinstance(error, commands.CommandInvokeError):
         logger.exception(f"Command error in {ctx.command}: {error.original}")
         await ctx.send(f"Something went wrong: {type(error.original).__name__}: {error.original}")
@@ -102,7 +138,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
 
 def main():
     """Run the bot."""
-    logger.info("Starting D&D 5e Discord Bot...")
+    logger.info(f"Starting TTRPGBot v{__version__}...")
     bot.run(DISCORD_TOKEN, log_handler=None)
 
 
