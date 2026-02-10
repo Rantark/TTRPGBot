@@ -376,9 +376,14 @@ All dice commands support **advantage** and **disadvantage** — just add `adv` 
 | `!roll <notation> [adv\|dis]` | `!roll 2d6+3` | Roll any dice (d20, 4d6, d8+2, etc.) |
 | `!check <skill> [adv\|dis]` | `!check perception adv` | Ability/skill check with your modifier |
 | `!save <ability> [adv\|dis]` | `!save DEX dis` | Saving throw with proficiency if applicable |
-| `!attack [adv\|dis]` | `!attack adv` | Attack roll (d20 + ability mod + proficiency) |
+| `!attack <weapon> [adv\|dis]` | `!attack greatsword adv` | Attack + damage roll with a weapon from your sheet |
+| `!attack <weapon> <atk> <dmg>` | `!attack greatsword 1d20+4 2d6+2` | Manual attack + damage with custom dice |
+| `!spellattack <spell> <dmg>` | `!spellattack Fire Bolt 1d10` | Spell attack + damage (auto spell attack mod) |
+| `!spellattack <spell> <atk> <dmg>` | `!spellattack Eldritch Blast 1d20+5 1d10+3` | Manual spell attack + damage |
 
-Advantage rolls the d20 twice and takes the higher result. Disadvantage takes the lower. Both individual rolls are shown.
+`!spellattack` aliases: `!sa`, `!spellatk`
+
+Advantage rolls the d20 twice and takes the higher result. Disadvantage takes the lower. Both individual rolls are shown. Critical hits (nat 20) automatically roll extra damage dice.
 
 ### Combat & Tactical Map
 

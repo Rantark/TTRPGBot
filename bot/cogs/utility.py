@@ -275,7 +275,10 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!roll <notation> [adv|dis]` — Roll dice (d20, 2d6+3, etc.)\n"
                 "`!check <skill/ability> [adv|dis]` — Ability or skill check\n"
                 "`!save <ability> [adv|dis]` — Saving throw (STR, DEX, CON, INT, WIS, CHA)\n"
-                "`!attack [adv|dis]` — Attack roll (d20 + mod + proficiency)"
+                "`!attack <weapon> [adv|dis]` — Attack + damage with a weapon\n"
+                "`!attack <weapon> <atk_dice> <dmg_dice>` — Manual attack + damage\n"
+                "`!spellattack <spell> <dmg_dice> [adv|dis]` — Spell attack + damage (aliases: `!sa`, `!spellatk`)\n"
+                "`!spellattack <spell> <atk_dice> <dmg_dice>` — Manual spell attack + damage"
             ),
         },
         "combat": {
@@ -372,7 +375,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
-        "roll": "dice", "rolls": "dice", "rolling": "dice",
+        "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
         "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression", "hitdie": "progression", "hd": "progression", "stabilize": "progression", "deathsave": "progression",

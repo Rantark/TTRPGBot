@@ -736,11 +736,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
     @commands.command(name="attack")
     async def attack(self, ctx: commands.Context, *, args: str = ""):
-        """Make an attack roll (d20 + STR or DEX mod + proficiency).
+        """Make an attack roll with a weapon, including damage.
 
-        Usage: !attack
-        Usage: !attack adv
-        Usage: !attack dis
+        Usage: !attack <weapon> (auto-calc from your weapons list)
+        Usage: !attack <weapon> <attack_dice> <damage_dice> (manual rolls)
+        Usage: !attack <weapon> adv/dis (with advantage/disadvantage)
+        Usage: !attack (uses best ability mod, no specific weapon)
+
+        Examples:
+          !attack greatsword
+          !attack longbow adv
+          !attack greatsword 1d20+4 2d6+2
+          !attack handaxe 1d20+5 1d6+3 adv
         """
         campaign = self._get_campaign(ctx)
         if not campaign:
@@ -752,13 +759,200 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             await ctx.send("You don't have a character.")
             return
 
-        # Parse advantage/disadvantage
-        _, advantage, disadvantage = parse_adv_dis(args) if args else ("", False, False)
+        if not args.strip():
+            await ctx.send(
+                "**Usage:** `!attack <weapon> [adv|dis]`\n"
+                "**Manual:** `!attack <weapon> <attack_dice> <damage_dice> [adv|dis]`\n"
+                "**Examples:**\n"
+                "  `!attack greatsword`\n"
+                "  `!attack longbow adv`\n"
+                "  `!attack greatsword 1d20+4 2d6+2`\n\n"
+                "Your weapons: " + (", ".join(w['name'] for w in char.weapons) if char.weapons else "*none — add with character creation*")
+            )
+            return
 
-        # Use highest of STR/DEX for attack (simple heuristic)
+        # Parse advantage/disadvantage from the end
+        args, advantage, disadvantage = parse_adv_dis(args)
+        parts = args.strip().split()
+
+        if not parts:
+            # Only adv/dis was provided, no weapon — fall back to generic attack
+            return await self._generic_attack(ctx, char, advantage, disadvantage)
+
+        # Check for manual dice notation: <weapon> <attack_dice> <damage_dice>
+        # Dice notation matches patterns like 1d20+4, 2d6+2, d8, etc.
+        import re
+        dice_pattern = r'^\d*d\d+([+-]\d+)?$'
+        manual_attack = None
+        manual_damage = None
+
+        # Try to identify which parts are dice vs weapon name
+        # Work backwards: last two parts might be dice
+        if len(parts) >= 3:
+            p_last = parts[-1].lower()
+            p_second = parts[-2].lower()
+            if re.match(dice_pattern, p_last) and re.match(dice_pattern, p_second):
+                manual_attack = p_second
+                manual_damage = p_last
+                parts = parts[:-2]
+        elif len(parts) >= 2:
+            p_last = parts[-1].lower()
+            p_second = parts[-2].lower()
+            if re.match(dice_pattern, p_last) and re.match(dice_pattern, p_second):
+                manual_attack = p_second
+                manual_damage = p_last
+                parts = parts[:-2]
+
+        weapon_name = " ".join(parts).strip() if parts else ""
+
+        # If we have manual dice, roll them directly
+        if manual_attack and manual_damage:
+            atk_result = parse_and_roll(manual_attack, advantage=advantage, disadvantage=disadvantage)
+            dmg_result = parse_and_roll(manual_damage)
+
+            if "error" in atk_result:
+                await ctx.send(f"Attack dice error: {atk_result['error']}")
+                return
+            if "error" in dmg_result:
+                await ctx.send(f"Damage dice error: {dmg_result['error']}")
+                return
+
+            nat = ""
+            if atk_result.get("total") and atk_result.get("sides") == 20:
+                # Check for nat 20/1 on the chosen roll
+                rolls = atk_result.get("rolls", [])
+                if advantage or disadvantage:
+                    rolls2 = atk_result.get("rolls2", [])
+                    all_d20 = [rolls[0], rolls2[0]] if rolls2 else [rolls[0]]
+                    chosen = max(all_d20) if advantage else min(all_d20)
+                    if chosen == 20:
+                        nat = " **CRITICAL HIT!**"
+                    elif chosen == 1:
+                        nat = " *Critical miss!*"
+                else:
+                    if rolls and rolls[0] == 20:
+                        nat = " **CRITICAL HIT!**"
+                    elif rolls and rolls[0] == 1:
+                        nat = " *Critical miss!*"
+
+            label = f"**{weapon_name}**" if weapon_name else "Attack"
+            await ctx.send(
+                f"**{char.name}** attacks with {label}!\n"
+                f"  Attack: {atk_result['breakdown']}{nat}\n"
+                f"  Damage: {dmg_result['breakdown']}"
+            )
+            return
+
+        # Auto-calculate from character's weapon list
+        if weapon_name and char.weapons:
+            # Find the weapon (fuzzy match)
+            matched_weapon = None
+            weapon_lower = weapon_name.lower()
+            for w in char.weapons:
+                if w['name'].lower() == weapon_lower:
+                    matched_weapon = w
+                    break
+            if not matched_weapon:
+                for w in char.weapons:
+                    if weapon_lower in w['name'].lower() or w['name'].lower() in weapon_lower:
+                        matched_weapon = w
+                        break
+
+            if matched_weapon:
+                return await self._weapon_attack(ctx, char, matched_weapon, advantage, disadvantage)
+            else:
+                weapon_list = ", ".join(f"`{w['name']}`" for w in char.weapons)
+                await ctx.send(
+                    f"Unknown weapon: `{weapon_name}`\n"
+                    f"Your weapons: {weapon_list}\n"
+                    f"Or use manual dice: `!attack {weapon_name} 1d20+4 1d8+2`"
+                )
+                return
+        elif weapon_name and not char.weapons:
+            # No weapons on sheet but they typed a name — prompt for manual dice
+            await ctx.send(
+                f"You don't have any weapons on your character sheet.\n"
+                f"Use manual dice: `!attack {weapon_name} 1d20+4 1d8+2`\n"
+                f"Or add weapons during character creation."
+            )
+            return
+
+        # No weapon name at all — generic attack with best mod
+        await self._generic_attack(ctx, char, advantage, disadvantage)
+
+    async def _weapon_attack(self, ctx, char, weapon: dict, advantage: bool, disadvantage: bool):
+        """Roll attack and damage for a specific weapon from the character sheet."""
+        is_finesse = weapon.get('finesse', False)
+        is_ranged = weapon.get('category') == 'ranged'
+
+        if is_finesse or is_ranged:
+            ab_mod = char.get_modifier("DEX")
+            ab_used = "DEX"
+        else:
+            ab_mod = char.get_modifier("STR")
+            ab_used = "STR"
+
+        # For finesse weapons, use higher of STR/DEX
+        if is_finesse:
+            str_mod = char.get_modifier("STR")
+            dex_mod = char.get_modifier("DEX")
+            if str_mod > dex_mod:
+                ab_mod = str_mod
+                ab_used = "STR"
+
+        # Attack roll: d20 + ability mod + proficiency
+        atk_total_mod = ab_mod + char.proficiency_bonus
+        result = roll_check(ab_mod, char.proficiency_bonus,
+                            advantage=advantage, disadvantage=disadvantage)
+
+        nat = ""
+        is_crit = False
+        if result["natural_20"]:
+            nat = " **CRITICAL HIT!**"
+            is_crit = True
+        elif result["natural_1"]:
+            nat = " *Critical miss!*"
+
+        # Damage roll from weapon data
+        damage_notation = weapon.get('damage', '1d4')
+        # Add ability modifier to damage
+        if ab_mod >= 0:
+            damage_dice = f"{damage_notation}+{ab_mod}"
+        elif ab_mod < 0:
+            damage_dice = f"{damage_notation}{ab_mod}"
+
+        dmg_result = parse_and_roll(damage_dice)
+
+        if "error" in dmg_result:
+            # Fallback: just show attack without damage
+            await ctx.send(
+                f"**{char.name}** attacks with **{weapon['name']}** ({ab_used})!\n"
+                f"  Attack: {result['breakdown']}{nat}"
+            )
+            return
+
+        # On crit, roll damage dice twice
+        crit_text = ""
+        if is_crit:
+            crit_dmg = parse_and_roll(damage_notation)
+            if "error" not in crit_dmg:
+                crit_extra = crit_dmg["total"]
+                crit_total = dmg_result["total"] + crit_extra
+                crit_text = f"\n  Crit bonus: +{crit_extra} = **{crit_total}** total damage"
+
+        props = f" ({', '.join(weapon['properties'])})" if weapon.get('properties') else ""
+        dmg_type = weapon.get('damage_type', '')
+
+        await ctx.send(
+            f"**{char.name}** attacks with **{weapon['name']}** ({ab_used})!{props}\n"
+            f"  Attack: {result['breakdown']}{nat}\n"
+            f"  Damage: {dmg_result['breakdown']} {dmg_type}{crit_text}"
+        )
+
+    async def _generic_attack(self, ctx, char, advantage: bool, disadvantage: bool):
+        """Fall back: generic attack roll with best ability mod."""
         str_mod = char.get_modifier("STR")
         dex_mod = char.get_modifier("DEX")
-        # Finesse / ranged: use DEX if higher for Rogues, Monks, Rangers
         if char.char_class in ("Rogue", "Monk", "Ranger") or dex_mod > str_mod:
             attack_mod = dex_mod
             ab_used = "DEX"
@@ -775,10 +969,176 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         elif result["natural_1"]:
             nat = " *Critical miss!*"
 
+        weapon_hint = ""
+        if char.weapons:
+            weapon_list = ", ".join(f"`{w['name']}`" for w in char.weapons)
+            weapon_hint = f"\nTip: `!attack <weapon>` for attack + damage — your weapons: {weapon_list}"
+
         await ctx.send(
-            f"**{char.name}** — Attack roll ({ab_used}): {result['breakdown']}{nat}\n"
-            f"Tell the DM what you're attacking with `!action`"
+            f"**{char.name}** — Attack roll ({ab_used}): {result['breakdown']}{nat}{weapon_hint}"
         )
+
+    @commands.command(name="spellattack", aliases=["sa", "spellatk"])
+    async def spell_attack(self, ctx: commands.Context, *, args: str = ""):
+        """Roll a spell attack and/or spell damage.
+
+        Usage: !spellattack <spell> <damage_dice> (auto spell attack + your damage)
+        Usage: !spellattack <spell> <attack_dice> <damage_dice> (manual rolls)
+        Usage: !spellattack <spell> (spell attack roll only, no damage)
+        Usage: !spellattack <spell> ... adv/dis (with advantage/disadvantage)
+
+        Examples:
+          !spellattack Fire Bolt 1d10
+          !spellattack Guiding Bolt 4d6
+          !spellattack Eldritch Blast 1d20+5 1d10+3
+          !spellattack Scorching Ray 1d20+5 2d6 adv
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        if not args.strip():
+            spell_atk_str = ""
+            if char.spellcasting_ability:
+                spell_mod = char.get_modifier(char.spellcasting_ability)
+                spell_atk = char.proficiency_bonus + spell_mod
+                spell_save = 8 + char.proficiency_bonus + spell_mod
+                atk_str = f"+{spell_atk}" if spell_atk >= 0 else str(spell_atk)
+                spell_atk_str = f"\nYour spell attack: **{atk_str}** | Spell Save DC: **{spell_save}**"
+
+            await ctx.send(
+                "**Usage:** `!spellattack <spell> <damage_dice> [adv|dis]`\n"
+                "**Manual:** `!spellattack <spell> <attack_dice> <damage_dice> [adv|dis]`\n"
+                "**Examples:**\n"
+                "  `!spellattack Fire Bolt 1d10`\n"
+                "  `!spellattack Guiding Bolt 4d6 adv`\n"
+                "  `!spellattack Eldritch Blast 1d20+5 1d10+3`"
+                f"{spell_atk_str}"
+            )
+            return
+
+        # Parse advantage/disadvantage
+        args, advantage, disadvantage = parse_adv_dis(args)
+        parts = args.strip().split()
+
+        if not parts:
+            await ctx.send("Please specify a spell name.")
+            return
+
+        import re
+        dice_pattern = r'^\d*d\d+([+-]\d+)?$'
+
+        # Find dice from the end of parts
+        dice_parts = []
+        name_parts = list(parts)
+        while name_parts and re.match(dice_pattern, name_parts[-1].lower()):
+            dice_parts.insert(0, name_parts.pop())
+
+        spell_name = " ".join(name_parts).strip() if name_parts else "Spell"
+
+        # Calculate spell attack modifier
+        if char.spellcasting_ability:
+            spell_mod = char.get_modifier(char.spellcasting_ability)
+            spell_atk_mod = char.proficiency_bonus + spell_mod
+            ab_used = char.spellcasting_ability
+        else:
+            spell_atk_mod = 0
+            ab_used = "none"
+
+        if len(dice_parts) == 0:
+            # Just spell attack roll, no damage
+            result = roll_check(spell_mod if char.spellcasting_ability else 0,
+                                char.proficiency_bonus if char.spellcasting_ability else 0,
+                                advantage=advantage, disadvantage=disadvantage)
+
+            nat = ""
+            if result["natural_20"]:
+                nat = " **CRITICAL HIT!**"
+            elif result["natural_1"]:
+                nat = " *Critical miss!*"
+
+            await ctx.send(
+                f"**{char.name}** casts **{spell_name}**!\n"
+                f"  Spell Attack ({ab_used}): {result['breakdown']}{nat}"
+            )
+
+        elif len(dice_parts) == 1:
+            # One dice = damage; auto-calc spell attack
+            damage_dice = dice_parts[0]
+
+            result = roll_check(spell_mod if char.spellcasting_ability else 0,
+                                char.proficiency_bonus if char.spellcasting_ability else 0,
+                                advantage=advantage, disadvantage=disadvantage)
+
+            nat = ""
+            is_crit = False
+            if result["natural_20"]:
+                nat = " **CRITICAL HIT!**"
+                is_crit = True
+            elif result["natural_1"]:
+                nat = " *Critical miss!*"
+
+            dmg_result = parse_and_roll(damage_dice)
+            if "error" in dmg_result:
+                await ctx.send(f"Damage dice error: {dmg_result['error']}")
+                return
+
+            crit_text = ""
+            if is_crit:
+                crit_extra = parse_and_roll(damage_dice)
+                if "error" not in crit_extra:
+                    crit_total = dmg_result["total"] + crit_extra["total"]
+                    crit_text = f"\n  Crit bonus: +{crit_extra['total']} = **{crit_total}** total damage"
+
+            await ctx.send(
+                f"**{char.name}** casts **{spell_name}**!\n"
+                f"  Spell Attack ({ab_used}): {result['breakdown']}{nat}\n"
+                f"  Damage: {dmg_result['breakdown']}{crit_text}"
+            )
+
+        elif len(dice_parts) >= 2:
+            # Two dice = manual attack + damage
+            attack_dice = dice_parts[0]
+            damage_dice = dice_parts[1]
+
+            atk_result = parse_and_roll(attack_dice, advantage=advantage, disadvantage=disadvantage)
+            dmg_result = parse_and_roll(damage_dice)
+
+            if "error" in atk_result:
+                await ctx.send(f"Attack dice error: {atk_result['error']}")
+                return
+            if "error" in dmg_result:
+                await ctx.send(f"Damage dice error: {dmg_result['error']}")
+                return
+
+            nat = ""
+            if atk_result.get("sides") == 20:
+                rolls = atk_result.get("rolls", [])
+                if advantage or disadvantage:
+                    rolls2 = atk_result.get("rolls2", [])
+                    all_d20 = [rolls[0], rolls2[0]] if rolls2 else [rolls[0]]
+                    chosen = max(all_d20) if advantage else min(all_d20)
+                    if chosen == 20:
+                        nat = " **CRITICAL HIT!**"
+                    elif chosen == 1:
+                        nat = " *Critical miss!*"
+                else:
+                    if rolls and rolls[0] == 20:
+                        nat = " **CRITICAL HIT!**"
+                    elif rolls and rolls[0] == 1:
+                        nat = " *Critical miss!*"
+
+            await ctx.send(
+                f"**{char.name}** casts **{spell_name}**!\n"
+                f"  Spell Attack: {atk_result['breakdown']}{nat}\n"
+                f"  Damage: {dmg_result['breakdown']}"
+            )
 
 
 async def setup(bot: commands.Bot):
