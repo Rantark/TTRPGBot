@@ -27,7 +27,13 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - [Character Creation Walkthrough](#character-creation-walkthrough)
 - [RP Scene Coordination](#rp-scene-coordination)
 - [Combat System & Tactical Map](#combat-system--tactical-map)
+- [Inventory & Equipment](#inventory--equipment)
+- [Armor & AC System](#armor--ac-system)
+- [Consumables](#consumables)
 - [Spell System](#spell-system)
+- [Rest & Hit Dice](#rest--hit-dice)
+- [Death Saves & Unconscious](#death-saves--unconscious)
+- [Game Threads](#game-threads)
 - [DM Tools & Action Tags](#dm-tools--action-tags)
 - [Advantage & Disadvantage](#advantage--disadvantage)
 - [Quick Stat Commands](#quick-stat-commands)
@@ -56,6 +62,8 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - **Undo System** — Cancel pending RP actions with `!undo`, DM can `!rewind` to undo AI mistakes
 - **Utility** — AI recaps, investigation clue tracker, NPC journal, private DM whispers
 - **`!ask` Command** — Ask the DM rules questions without advancing the story
+- **Game Threads** — Each campaign gets its own Discord thread to keep gameplay organized and separate from other chat
+- **`!commands` via DM** — Help text is sent to your DMs to keep game chat clean
 - **Prompt Caching** — Anthropic prompt caching reduces API costs by up to 90% on repeat calls
 - **Persistent Storage** — Campaigns save to JSON files, survive bot restarts
 - **Async-Friendly** — Designed for play-by-post (3-6 players responding over hours or days)
@@ -151,9 +159,15 @@ In the **Bot** tab, scroll down to **Privileged Gateway Intents** and enable:
 2. Under **Scopes**, check `bot`
 3. Under **Bot Permissions**, check:
    - Send Messages
+   - Send Messages in Threads
+   - Create Public Threads
+   - Manage Threads
    - Read Message History
    - Embed Links
    - Use External Emojis
+   - Add Reactions
+
+   **Thread permissions are required** — the bot creates a Discord thread for each campaign when `!startcampaign` is used. If thread permissions are missing, the bot will fall back to playing in the main channel instead.
 4. Copy the generated URL and open it in your browser
 5. Select your server and authorize
 
@@ -268,7 +282,7 @@ Bot:     [Shows initiative order, announces first turn]
 
 ## Command Reference
 
-Type `!commands` in Discord to see these categories, or `!commands <category>` for details.
+Type `!commands` in Discord to see these categories, or `!commands <category>` for details. Help text is sent via **DM** to keep game chat clean (falls back to channel if DMs are disabled).
 
 ### Campaign Management
 
@@ -376,6 +390,7 @@ Advantage rolls the d20 twice and takes the higher result. Disadvantage takes th
 | `!hitdie [count]` | Player | Spend hit dice to heal (alias: `!hd`) |
 | `!hp` | Player | View your current HP (shows unconscious status) |
 | `!hp +5` / `!hp -3` | Player/DM | Heal or take damage |
+| `!hp @player -5` | DM | DM adjusts another player's HP |
 | `!xp <amount>` | DM | Award XP to all players |
 | `!xp <amount> @player` | DM | Award XP to one player |
 | `!levelup` | Player | Level up if you have enough XP (spell slots update automatically) |
@@ -710,6 +725,157 @@ Bot:     Combat has ended after 4 round(s). Resume roleplay freely!
 
 ---
 
+## Inventory & Equipment
+
+The bot tracks each character's inventory, gold, and equipped items. Claude can automatically give loot via `[LOOT:]` tags, and players can manage their gear with commands.
+
+### Gold
+
+```
+Player:  !gold
+Bot:     Thandril's Gold: 150 gp
+
+Player:  !gold +50
+Bot:     Thandril's gold: 100 → 150 gp
+
+Player:  !give @Player2 25 gold
+Bot:     Gave 25 gold to Elara.
+```
+
+The DM can also adjust gold:
+
+```
+DM:      !gold @Player +100
+DM:      !loot @Player 50 gold
+DM:      !giveall 100 gold
+```
+
+### Items
+
+```
+Player:  !equipment
+Bot:     Thandril's Inventory:
+         Gold: 150 gp
+         Equipped: Chain Mail, Shield
+
+         • Potion of Healing x2
+         • Rope (50 ft)
+         • Torch x5
+
+Player:  !equipment add Rope (50 ft)
+Bot:     Added Rope (50 ft) to inventory.
+
+Player:  !give @Player2 Potion of Healing
+Bot:     Gave Potion of Healing to Elara.
+```
+
+Items stack automatically — adding another "Torch" increments the quantity rather than creating a duplicate entry.
+
+### DM Loot Commands
+
+```
+DM:      !loot @Player Potion of Healing
+DM:      !loot @Player 3 Arrows
+DM:      !giveall Potion of Healing     (gives to all players)
+DM:      !giveall 50 gold               (gives to all players)
+```
+
+Claude can also give loot automatically during narration using `[LOOT:]` tags — see [DM Tools & Action Tags](#dm-tools--action-tags).
+
+---
+
+## Armor & AC System
+
+AC is calculated automatically based on equipped armor, shield, DEX modifier, and class features.
+
+### Armor Types
+
+| Armor | Type | Base AC | DEX Bonus | Stealth |
+|---|---|---|---|---|
+| Leather | Light | 11 | Full DEX | — |
+| Studded Leather | Light | 12 | Full DEX | — |
+| Hide | Medium | 12 | Max +2 | — |
+| Chain Shirt | Medium | 13 | Max +2 | — |
+| Scale Mail | Medium | 14 | Max +2 | Disadvantage |
+| Breastplate | Medium | 14 | Max +2 | — |
+| Half Plate | Medium | 15 | Max +2 | Disadvantage |
+| Ring Mail | Heavy | 14 | None | Disadvantage |
+| Chain Mail | Heavy | 16 | None | Disadvantage |
+| Splint | Heavy | 17 | None | Disadvantage |
+| Plate | Heavy | 18 | None | Disadvantage |
+
+**Shield:** +2 AC (can be equipped alongside armor).
+
+### Unarmored Defense
+
+- **Barbarian:** 10 + DEX mod + CON mod
+- **Monk:** 10 + DEX mod + WIS mod
+- **Others (no armor):** 10 + DEX mod
+
+### Starting Armor
+
+Each class receives appropriate starting armor during character creation:
+
+| Class | Starting Armor | Shield |
+|---|---|---|
+| Fighter, Paladin | Chain Mail | Yes |
+| Cleric | Scale Mail | Yes |
+| Ranger | Scale Mail | No |
+| Rogue, Bard, Warlock, Druid | Leather | No |
+| Barbarian, Monk, Sorcerer, Wizard | None (unarmored) | No |
+
+### Equipping Armor
+
+```
+Player:  !equip armor Studded Leather
+Bot:     Equipped Studded Leather. AC: 12 → 14
+
+Player:  !equip shield
+Bot:     Equipped shield. AC: 14 → 16
+
+Player:  !equip no shield
+Bot:     Removed shield. AC: 16 → 14
+
+Player:  !equip none
+Bot:     Removed armor. AC: 14 → 12
+
+Player:  !ac
+Bot:     Thandril's AC: 16 (Chain Mail, Shield)
+```
+
+---
+
+## Consumables
+
+Certain items have automatic effects when used with `!use`. The bot rolls dice and applies healing or removes conditions automatically.
+
+### Available Consumables
+
+| Item | Effect | Dice |
+|---|---|---|
+| Potion of Healing | Heal | 2d4 + 2 |
+| Potion of Greater Healing | Heal | 4d4 + 4 |
+| Potion of Superior Healing | Heal | 8d4 + 8 |
+| Potion of Supreme Healing | Heal | 10d4 + 20 |
+| Antitoxin | Remove poisoned condition | — |
+
+### Using Consumables
+
+```
+Player:  !use Potion of Healing
+Bot:     Thandril uses Potion of Healing.
+         Healed 7 HP (rolled 2d4+2: [3, 2] + 2 = 7)
+         HP: 15 → 22/30
+
+Player:  !use Antitoxin
+Bot:     Thandril uses Antitoxin.
+         Condition removed: poisoned
+```
+
+Items not in the consumables database are simply removed from inventory — Claude handles the narrative effect.
+
+---
+
 ## Spell System
 
 The bot tracks spellcasting for all D&D 5e caster types:
@@ -721,6 +887,8 @@ The bot tracks spellcasting for all D&D 5e caster types:
 | **Pact Caster** | Warlock | Short rest |
 
 Non-caster classes (Barbarian, Fighter, Monk, Rogue) have no spell slots.
+
+**Half-caster note:** Paladins and Rangers gain spellcasting at **level 2**, not level 1. If the campaign starting level is 2+, they'll choose spells during character creation. At level 1, they have no spell slots.
 
 ### Spellcasting Workflow
 
@@ -753,6 +921,145 @@ These are calculated automatically based on your spellcasting ability:
 - **Spell Attack** = proficiency bonus + spellcasting ability modifier
 
 View them on your character sheet (`!sheet`) or spell list (`!spells`).
+
+---
+
+## Rest & Hit Dice
+
+### Short Rest
+
+During a short rest, characters can spend **hit dice** to heal. Each hit die rolls the class's die + CON modifier (minimum 1 HP per die).
+
+```
+Player:  !rest short
+Bot:     Thandril takes a short rest.
+         Spent 1 hit die: d10 [6] + CON (+2) = 8 HP healed
+         HP: 15 → 23/30
+         Hit Dice remaining: 4
+
+Player:  !hitdie 2
+Bot:     Thandril spends 2 hit dice:
+           d10 [7] + CON (+2) = 9
+           d10 [4] + CON (+2) = 6
+         Healed: 15 HP
+         HP: 23 → 30/30
+         Hit Dice remaining: 2/5
+```
+
+Warlock pact magic slots are restored on short rest. All other spell slots require a long rest.
+
+### Long Rest
+
+A long rest fully restores HP and spell slots, and recovers half your max hit dice (minimum 1):
+
+```
+Player:  !rest long
+Bot:     Thandril takes a long rest.
+         HP fully restored: 30/30 (+7)
+         Hit Dice restored: 2 (total: 4)
+         Death saves reset.
+         All spell slots restored!
+```
+
+### Hit Dice Summary
+
+| Level | Max Hit Dice | Short Rest | Long Rest Recovery |
+|---|---|---|---|
+| 1 | 1 | Spend any available | Recover at least 1 |
+| 5 | 5 | Spend any available | Recover 2 |
+| 10 | 10 | Spend any available | Recover 5 |
+
+Hit dice can never exceed your character level.
+
+---
+
+## Death Saves & Unconscious
+
+### Falling to 0 HP
+
+When a character drops to 0 HP, they fall **unconscious** and begin making death saving throws. The bot:
+
+1. Adds the "unconscious" condition automatically
+2. Shows **UNCONSCIOUS** status in `!hp` output
+3. Reports death save progress to Claude so the DM can narrate it
+
+```
+DM:      !hp @Player -15
+Bot:     Thandril took 15 damage: 8 → 0/30
+         Thandril has fallen to 0 HP! Death saving throws begin...
+```
+
+### Death Saving Throws
+
+Each turn at 0 HP, the player rolls a d20:
+
+| Roll | Result |
+|---|---|
+| 1 | 2 failures (critical fail) |
+| 2-9 | 1 failure |
+| 10-19 | 1 success |
+| 20 | Regain 1 HP and consciousness (critical success) |
+
+Three successes = **stabilized** (no longer dying). Three failures = **death**.
+
+```
+Player:  !deathsave
+Bot:     Thandril rolls a death save: [14] — Success
+         Successes: O.. | Failures: ...
+
+Player:  !deathsave
+Bot:     Thandril rolls a death save: [20] NAT 20!
+         Thandril regains consciousness with 1 HP!
+```
+
+### Stabilizing
+
+Any player can stabilize an unconscious ally:
+
+```
+Player:  !stabilize @FallenPlayer
+Bot:     Thandril has been stabilized. No longer making death saves.
+```
+
+### Healing from Unconscious
+
+Any healing brings the character back to consciousness:
+
+```
+DM:      !hp @Player +5
+Bot:     Thandril healed 5 HP: 0 → 5/30
+         Thandril regains consciousness!
+```
+
+Death saves reset automatically when a character regains HP or takes a long rest.
+
+---
+
+## Game Threads
+
+When a campaign starts, the bot creates a **Discord thread** to keep the game organized and separate from other channel activity.
+
+### How It Works
+
+1. **Setup phase** (`!newcampaign`, `!createchar`) happens in the main channel
+2. When the DM types `!startcampaign`, the bot creates a public thread named after the campaign
+3. All gameplay commands (`!action`, `!roll`, `!check`, etc.) should be used **in the thread**
+4. When the campaign ends (`!endcampaign`), the thread is archived
+
+### Thread Permissions
+
+The bot needs these Discord permissions to create threads:
+
+- **Create Public Threads** — to create the game thread
+- **Send Messages in Threads** — to post in the thread
+- **Manage Threads** — to archive the thread when the campaign ends
+- **Add Reactions** — for `!suggestcampaign` emoji reactions
+
+If the bot lacks thread permissions, it falls back gracefully to running the campaign in the main channel (no thread is created).
+
+### Multiple Campaigns
+
+Each channel can have one campaign at a time. Since `!startcampaign` creates a thread, the main channel stays clean for other conversations or for starting a new campaign after the current one ends.
 
 ---
 
@@ -793,6 +1100,22 @@ Claude automatically updates game state through hidden tags in its narration. Pl
 Players see: *"The orc's axe crashes down! Thandril, you stagger from 9 slashing damage."*
 Behind the scenes: Thandril's HP is reduced by 9.
 
+### DM Rewind (`!rewind`)
+
+If Claude makes a mistake (wrong NPC name, contradicts lore, kills the wrong character), the DM can undo it:
+
+```
+DM:      !rewind
+Bot:     Last DM response removed. Continue from the previous action.
+```
+
+This removes the last assistant + user exchange from Claude's conversation history. Optionally, the DM can provide a new prompt to replace the scene:
+
+```
+DM:      !rewind The dragon doesn't attack yet — it speaks first
+Bot:     [Claude generates a new scene where the dragon speaks]
+```
+
 ### DM Whispers
 
 Two ways to send private information to a player:
@@ -801,6 +1124,44 @@ Two ways to send private information to a player:
 2. **Automatic:** Claude includes `[WHISPER: CharName]` tags in narration — the bot sends the secret as a Discord DM
 
 Whispers are hidden from the channel. Only the target player sees the message.
+
+### Campaign Suggestions (`!suggestcampaign`)
+
+Don't have a campaign idea? Ask Claude to brainstorm:
+
+```
+DM:      !suggestcampaign
+Bot:     What kind of campaign are you interested in?
+         1️⃣ Combat-Focused    2️⃣ Roleplay-Heavy    3️⃣ Mystery/Investigation
+         4️⃣ Exploration        5️⃣ Surprise Me
+         React with a number or type 1-5
+
+DM:      [reacts with 2️⃣ or types "2"]
+Bot:     Claude is brainstorming campaign ideas...
+
+         Campaign Suggestions:
+
+         **1. The Masquerade of Mirrors**
+         A political intrigue campaign set in a decadent city-state...
+         *Starting Level: 3*
+
+         **2. The Traveling Theater Troupe**
+         You're performers traveling between villages...
+         *Starting Level: 1*
+
+         **3. The Diplomatic Envoys**
+         Prevent a war between two kingdoms through negotiation...
+         *Starting Level: 2*
+
+         React 1️⃣/2️⃣/3️⃣ to start that campaign, or !newcampaign to create your own.
+
+DM:      [reacts with 1️⃣]
+Bot:     Campaign Created: The Masquerade of Mirrors
+         Starting Level: 3
+         Players can now create characters with !createchar
+```
+
+The selected campaign is created in setup phase with the suggested starting level applied automatically.
 
 ### Full Party Stats for Claude
 
@@ -954,13 +1315,13 @@ TTRPGBot/
 │   ├── dice.py               # Dice rolling engine (notation parsing, ability checks, adv/dis)
 │   ├── storage.py            # Persistent JSON file storage per campaign
 │   ├── cogs/
-│   │   ├── campaign.py       # !newcampaign, !pitch, !vote, !startcampaign, etc.
-│   │   ├── character.py      # !createchar, !cc (creation), !sheet, !ac/stats/skills/saves/weapons
-│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !undo, RP queue
+│   │   ├── campaign.py       # !newcampaign, !suggestcampaign, !pitch, !startcampaign, !loot, threads
+│   │   ├── character.py      # !createchar, !sheet, !ac/stats/skills/saves/weapons, !equip, !use, !give
+│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !undo, !rewind, RP queue
 │   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
-│   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !feat, !modifier
+│   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !stabilize, !hitdie, !feat, !modifier
 │   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
-│   │   └── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands
+│   │   └── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands (via DM)
 │   ├── models/
 │   │   ├── character.py      # Character class — stats, abilities, spells, weapons, serialization
 │   │   └── campaign.py       # Campaign, CombatState, CombatMap, RP queue state
@@ -1009,15 +1370,35 @@ A: Set `CLAUDE_MODEL` in your `.env` file. For example, `CLAUDE_MODEL=claude-son
 **Q: The bot isn't responding to commands.**
 A: Check that:
 1. **Message Content Intent** is enabled in the Discord Developer Portal
-2. Your bot has **Send Messages** and **Read Message History** permissions in the channel
+2. Your bot has **Send Messages**, **Read Message History**, **Create Public Threads**, and **Send Messages in Threads** permissions in the channel
 3. The `.env` file has the correct tokens
 4. The Command Prompt window running the bot is still open
 
 **Q: Can two campaigns run at the same time?**
-A: Yes — campaigns are per-channel. Different channels can have different campaigns running simultaneously.
+A: Yes — campaigns are per-channel. Different channels can have different campaigns running simultaneously. Each campaign gets its own thread when started.
+
+**Q: The bot isn't creating threads — what's wrong?**
+A: The bot needs **Create Public Threads**, **Send Messages in Threads**, and **Manage Threads** permissions. Check your bot's permissions in Server Settings > Roles. If threads can't be created, the bot falls back to playing in the main channel.
+
+**Q: Can I play without threads?**
+A: Yes. If the bot lacks thread permissions, it will run the campaign directly in the channel. Everything works the same — you just don't get the organizational benefit of a dedicated thread.
+
+**Q: Why does `!commands` send a DM instead of posting in the channel?**
+A: To keep the game thread clean. The full help text is 30+ lines. If your DMs are disabled, the bot falls back to posting in the channel.
+
+**Q: What are campaign phases?**
+A: Campaigns go through these phases:
+1. **Pitching** — Players propose and vote on concepts (`!pitch`, `!vote`)
+2. **Setup** — Players create characters (`!createchar`), DM sets options (`!setlevel`)
+3. **Active** — Adventure is live, all gameplay commands work
+
+You skip Pitching if you use `!newcampaign <name>` or `!suggestcampaign` directly.
 
 **Q: How much does the API cost?**
 A: With prompt caching enabled, costs are very low. A typical 2-hour session with 50 exchanges costs roughly $0.50-$2.00 on Sonnet depending on response length. The caching saves ~90% on input tokens after the first call.
 
 **Q: Can I add homebrew races or classes?**
 A: Yes — add them to `bot/data/races.py`, `bot/data/classes.py`, or `bot/data/backgrounds.py`. Follow the same dictionary format as the existing entries.
+
+**Q: Can I add custom consumables or armor?**
+A: Yes — add consumables to `bot/data/consumables.py` and armor to `bot/data/armor.py`. Follow the existing dictionary format. Consumables support healing effects (`effect_type: "heal"`) and condition removal (`effect_type: "remove_condition"`).
