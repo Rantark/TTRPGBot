@@ -8,7 +8,7 @@ import discord
 from discord.ext import commands
 
 from bot.models.campaign import Campaign, CampaignPhase
-from bot.storage import save_campaign, load_campaign, delete_campaign
+from bot.storage import save_campaign, load_campaign, delete_campaign, load_guild_settings, save_guild_settings
 
 
 class CampaignCog(commands.Cog, name="Campaign"):
@@ -307,7 +307,9 @@ class CampaignCog(commands.Cog, name="Campaign"):
         campaign.setup_channel_id = str(ctx.channel.id)
 
         # Try creating a forum post first if configured
-        forum_channel_id = os.getenv("CAMPAIGN_FORUM_ID")
+        # Check guild settings first (set via !setforum), then fall back to .env
+        guild_settings = load_guild_settings(str(ctx.guild.id))
+        forum_channel_id = guild_settings.get("campaign_forum_id") or os.getenv("CAMPAIGN_FORUM_ID")
         if forum_channel_id:
             try:
                 forum_channel = self.bot.get_channel(int(forum_channel_id))
@@ -657,6 +659,46 @@ class CampaignCog(commands.Cog, name="Campaign"):
             lines.append("\nNo characters yet.")
 
         await ctx.send("\n".join(lines))
+
+    @commands.command(name="setforum")
+    @commands.has_permissions(administrator=True)
+    async def set_forum(self, ctx: commands.Context, channel: discord.ForumChannel = None):
+        """(Admin) Set the forum channel where campaigns will be created.
+
+        Usage: !setforum #campaigns
+        Usage: !setforum 1234567890123456789
+        """
+        if channel is None:
+            await ctx.send(
+                "**Usage:** `!setforum #forum-channel`\n"
+                "Mention or paste the ID of a **forum channel** where campaign posts will be created.\n"
+                "Use `!clearforum` to remove the setting."
+            )
+            return
+
+        settings = load_guild_settings(str(ctx.guild.id))
+        settings["campaign_forum_id"] = str(channel.id)
+        save_guild_settings(str(ctx.guild.id), settings)
+
+        await ctx.send(
+            f"Campaign forum set to {channel.mention}\n"
+            f"New campaigns started with `!startcampaign` will create posts there."
+        )
+
+    @commands.command(name="clearforum")
+    @commands.has_permissions(administrator=True)
+    async def clear_forum(self, ctx: commands.Context):
+        """(Admin) Remove the forum channel setting. Campaigns will use threads instead.
+
+        Usage: !clearforum
+        """
+        settings = load_guild_settings(str(ctx.guild.id))
+        if "campaign_forum_id" in settings:
+            del settings["campaign_forum_id"]
+            save_guild_settings(str(ctx.guild.id), settings)
+            await ctx.send("Campaign forum cleared. `!startcampaign` will create threads instead.")
+        else:
+            await ctx.send("No forum channel was set. Nothing to clear.")
 
     async def _send_long(self, ctx: commands.Context, text: str):
         """Send a message to ctx, splitting if it exceeds Discord's limit."""

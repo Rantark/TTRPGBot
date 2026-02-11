@@ -1078,16 +1078,19 @@ When a campaign starts, the bot creates a **Discord forum post** or **thread** t
 
 ### Forum Posts (Recommended)
 
-If you have a Discord forum channel for campaigns, set `CAMPAIGN_FORUM_ID` in your `.env` file:
+Set your forum channel directly from Discord:
+
+```
+!setforum #campaigns
+```
+
+That's it! The setting is saved per-server and persists across bot restarts. Use `!clearforum` to switch back to threads.
+
+Alternatively, you can set `CAMPAIGN_FORUM_ID` in your `.env` file (the `!setforum` command takes priority over the env var):
 
 ```
 CAMPAIGN_FORUM_ID=1234567890123456789
 ```
-
-To get the Forum Channel ID:
-1. Enable Developer Mode in Discord (User Settings > Advanced)
-2. Right-click your forum channel
-3. Click "Copy User ID"
 
 When `!startcampaign` is used:
 1. The bot creates a **forum post** in your designated forum channel

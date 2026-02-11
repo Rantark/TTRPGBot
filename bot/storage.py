@@ -88,3 +88,38 @@ def list_campaigns() -> list[str]:
             channel_id = fname[len("campaign_"):-len(".json")]
             ids.append(channel_id)
     return ids
+
+
+# ── Guild settings (per-server config saved to disk) ──
+
+SETTINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "settings")
+
+
+def _settings_path(guild_id: str) -> str:
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    return os.path.join(SETTINGS_DIR, f"guild_{guild_id}.json")
+
+
+def load_guild_settings(guild_id: str) -> dict:
+    """Load settings for a guild. Returns empty dict if none exist."""
+    path = _settings_path(guild_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        logger.exception(f"Failed to load settings for guild {guild_id}")
+        return {}
+
+
+def save_guild_settings(guild_id: str, settings: dict):
+    """Save settings for a guild."""
+    path = _settings_path(guild_id)
+    try:
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(settings, f, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        logger.exception(f"Failed to save settings for guild {guild_id}")
