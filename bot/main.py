@@ -124,8 +124,8 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.BadArgument):
         await ctx.send(f"Invalid argument. Check `!commands` for usage.")
         return
-    if isinstance(error, commands.NotOwner):
-        await ctx.send("This command is restricted to the bot owner.")
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("This command requires **Administrator** permission.")
         return
     if isinstance(error, commands.CommandInvokeError):
         logger.exception(f"Command error in {ctx.command}: {error.original}")

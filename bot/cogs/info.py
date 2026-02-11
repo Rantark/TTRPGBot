@@ -90,7 +90,7 @@ class Info(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='botinfo', aliases=['about', 'info'])
-    async def bot_info(self, ctx):
+    async def show_bot_info(self, ctx):
         """Show detailed bot information and statistics."""
         uptime = datetime.utcnow() - self.start_time
         hours, remainder = divmod(int(uptime.total_seconds()), 3600)
@@ -163,9 +163,9 @@ class Info(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='checkupdate', aliases=['updatecheck'])
-    @commands.is_owner()
+    @commands.has_permissions(administrator=True)
     async def check_update(self, ctx):
-        """(Owner only) Manually check for updates."""
+        """(Admin only) Manually check for updates."""
         await ctx.send("Checking for updates...")
 
         checker = UpdateChecker(self.bot)
@@ -209,9 +209,9 @@ class Info(commands.Cog):
             await ctx.send(f"You're running the latest version (`{update_info['current_version']}`)!")
 
     @commands.command(name='restart')
-    @commands.is_owner()
+    @commands.has_permissions(administrator=True)
     async def restart_bot(self, ctx):
-        """(Owner only) Restart the bot."""
+        """(Admin only) Restart the bot."""
         if not os.path.exists('.wrapper_active'):
             embed = discord.Embed(
                 title="Cannot Restart",
@@ -245,9 +245,9 @@ class Info(commands.Cog):
         asyncio.create_task(shutdown(EXIT_RESTART))
 
     @commands.command(name='update')
-    @commands.is_owner()
+    @commands.has_permissions(administrator=True)
     async def update_bot(self, ctx):
-        """(Owner only) Update the bot from GitHub and restart."""
+        """(Admin only) Update the bot from GitHub and restart."""
         if not os.path.exists('.wrapper_active'):
             embed = discord.Embed(
                 title="Cannot Update",
@@ -316,9 +316,9 @@ class Info(commands.Cog):
         asyncio.create_task(shutdown(EXIT_UPDATE))
 
     @commands.command(name='shutdown', aliases=['stop'])
-    @commands.is_owner()
+    @commands.has_permissions(administrator=True)
     async def shutdown_bot(self, ctx):
-        """(Owner only) Shut down the bot completely."""
+        """(Admin only) Shut down the bot completely."""
         embed = discord.Embed(
             title="Shutting Down",
             description="The bot is shutting down. Goodbye!",

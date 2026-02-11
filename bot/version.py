@@ -2,15 +2,20 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 __version_info__ = {
     'major': 1,
-    'minor': 1,
-    'patch': 1
+    'minor': 2,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.2.0** - February 11, 2026
+- Admin commands: !restart, !update, !shutdown, !checkupdate now use Discord admin permissions
+- No longer requires BOT_OWNER_ID — any server admin can manage the bot
+- Fixed cog naming issue (bot_info → show_bot_info) that could cause loading errors
+
 **Version 1.1.1** - February 11, 2026
 - Forum post support: !startcampaign auto-creates forum posts when CAMPAIGN_FORUM_ID is set
 - Each campaign gets its own organized forum post for gameplay

@@ -359,15 +359,15 @@ class UtilityCog(commands.Cog, name="Utility"):
         },
         "botinfo": {
             "title": "Bot Info & Admin",
-            "description": "Bot status, version info, and owner-only controls.",
+            "description": "Bot status, version info, and admin controls.",
             "commands": (
                 "`!ping` — Check bot latency and status\n"
                 "`!version` — Show version info and release notes (aliases: `!v`, `!ver`)\n"
                 "`!botinfo` — Detailed bot statistics (aliases: `!about`, `!info`)\n"
-                "`!checkupdate` — *(Owner)* Check for updates on GitHub\n"
-                "`!restart` — *(Owner)* Restart the bot\n"
-                "`!update` — *(Owner)* Pull updates from GitHub and restart\n"
-                "`!shutdown` — *(Owner)* Shut down the bot (alias: `!stop`)"
+                "`!checkupdate` — *(Admin)* Check for updates on GitHub\n"
+                "`!restart` — *(Admin)* Restart the bot\n"
+                "`!update` — *(Admin)* Pull updates from GitHub and restart\n"
+                "`!shutdown` — *(Admin)* Shut down the bot (alias: `!stop`)"
             ),
         },
     }
