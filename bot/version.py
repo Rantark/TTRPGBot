@@ -2,15 +2,21 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __version_info__ = {
     'major': 1,
     'minor': 1,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.1.1** - February 11, 2026
+- Forum post support: !startcampaign auto-creates forum posts when CAMPAIGN_FORUM_ID is set
+- Each campaign gets its own organized forum post for gameplay
+- Falls back to threads/channels if forum not configured or permissions missing
+- Campaign data saved under forum post ID for direct command lookup
+
 **Version 1.1.0** - February 10, 2026
 - Revamped !attack command — specify weapon for auto attack + damage rolls
 - Manual dice support: !attack <weapon> <atk_dice> <dmg_dice>

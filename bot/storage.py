@@ -42,6 +42,14 @@ def save_campaign(campaign: Campaign):
             with open(tmp_path, "w") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_path, thread_path)
+
+        # Also save under forum_post_id for direct lookup from forum post commands
+        if campaign.forum_post_id and campaign.forum_post_id != campaign.channel_id:
+            forum_path = _campaign_path(campaign.forum_post_id)
+            tmp_path = forum_path + ".tmp"
+            with open(tmp_path, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, forum_path)
     except Exception:
         logger.exception(f"Failed to save campaign for channel {campaign.channel_id}")
 

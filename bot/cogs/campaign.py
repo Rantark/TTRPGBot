@@ -1,6 +1,7 @@
 """Campaign management cog: pitch, vote, setup, start, end."""
 
 import asyncio
+import os
 import re
 
 import discord
@@ -278,8 +279,10 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
     @commands.command(name="startcampaign")
     async def start_campaign(self, ctx: commands.Context):
-        """DM starts the campaign — creates a game thread and begins the adventure!
+        """DM starts the campaign — creates a forum post or thread and begins the adventure!
 
+        If CAMPAIGN_FORUM_ID is set in .env, creates a forum post.
+        Otherwise falls back to creating a thread or playing in the current channel.
         Requires at least one character.
         """
         campaign = self._get_campaign(ctx)
@@ -301,6 +304,82 @@ class CampaignCog(commands.Cog, name="Campaign"):
             await ctx.send("No completed characters yet! Players need to finish `!createchar` first.")
             return
 
+        campaign.setup_channel_id = str(ctx.channel.id)
+
+        # Try creating a forum post first if configured
+        forum_channel_id = os.getenv("CAMPAIGN_FORUM_ID")
+        if forum_channel_id:
+            try:
+                forum_channel = self.bot.get_channel(int(forum_channel_id))
+                if forum_channel and isinstance(forum_channel, discord.ForumChannel):
+                    await self._start_in_forum(ctx, campaign, forum_channel)
+                    return
+                elif forum_channel:
+                    await ctx.send("Configured CAMPAIGN_FORUM_ID is not a forum channel. Falling back to thread.")
+                else:
+                    await ctx.send("Configured forum channel not found. Falling back to thread.")
+            except (ValueError, Exception) as e:
+                await ctx.send(f"Error accessing forum channel. Falling back to thread.")
+
+        # Fall back to thread-based or channel-based start
+        await self._start_in_thread(ctx, campaign)
+
+    async def _start_in_forum(self, ctx: commands.Context, campaign: Campaign, forum_channel: discord.ForumChannel):
+        """Start the campaign by creating a forum post."""
+        campaign_name = campaign.name or "D&D Campaign"
+        player_mentions = ", ".join(f"<@{pid}>" for pid in campaign.characters.keys())
+
+        await ctx.send(f"Creating forum post for **{campaign_name}**...")
+
+        try:
+            forum_post = await forum_channel.create_thread(
+                name=f"{campaign_name}",
+                content=(
+                    f"**Campaign: {campaign_name}**\n\n"
+                    f"**DM:** <@{campaign.dm_id}>\n"
+                    f"**Players:** {player_mentions}\n\n"
+                    f"*Adventure loading...*"
+                ),
+                reason=f"D&D Campaign: {campaign_name}",
+            )
+
+            # forum_post is a (Thread, Message) tuple from ForumChannel.create_thread
+            thread = forum_post[0] if isinstance(forum_post, tuple) else forum_post
+
+            campaign.forum_post_id = str(thread.id)
+            campaign.thread_id = str(thread.id)
+            campaign.parent_channel_id = str(ctx.channel.id)
+            campaign.phase = CampaignPhase.ACTIVE
+            save_campaign(campaign)
+
+            # Announce in the setup channel
+            await ctx.send(
+                f"**{campaign_name}** has begun!\n"
+                f"Forum Post: {thread.mention}\n"
+                f"All gameplay will happen there. Head over to begin your adventure!\n"
+                f"Players: {player_mentions}"
+            )
+
+            # Generate opening narration in the forum post
+            async with ctx.typing():
+                narration = await self.bot.dm_engine.narrate_start(campaign)
+            save_campaign(campaign)
+
+            await self._send_long_to(thread, narration)
+
+        except discord.Forbidden:
+            await ctx.send(
+                "I don't have permission to create forum posts.\n"
+                "Please give me 'Create Posts' permission in the forum channel.\n"
+                "Falling back to thread..."
+            )
+            await self._start_in_thread(ctx, campaign)
+        except Exception as e:
+            await ctx.send(f"Failed to create forum post: {e}\nFalling back to thread...")
+            await self._start_in_thread(ctx, campaign)
+
+    async def _start_in_thread(self, ctx: commands.Context, campaign: Campaign):
+        """Start the campaign by creating a thread (or playing in current channel)."""
         # Create a game thread for the campaign
         thread = None
         if not isinstance(ctx.channel, discord.Thread):
@@ -348,7 +427,7 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
     @commands.command(name="endcampaign")
     async def end_campaign(self, ctx: commands.Context):
-        """DM ends the campaign permanently. Archives the game thread if one exists."""
+        """DM ends the campaign permanently. Archives the game thread/forum post if one exists."""
         campaign = self._get_campaign(ctx)
         if not campaign:
             await ctx.send("No campaign in this channel.")
@@ -359,26 +438,31 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
         name = campaign.name or "Unnamed Campaign"
 
-        # Delete campaign data (both channel and thread save files)
+        # Delete campaign data (all save files: channel, thread, forum post)
         delete_campaign(str(ctx.channel.id))
         if campaign.thread_id and campaign.thread_id != str(ctx.channel.id):
             delete_campaign(campaign.thread_id)
+        if campaign.forum_post_id and campaign.forum_post_id != str(ctx.channel.id):
+            delete_campaign(campaign.forum_post_id)
         if campaign.parent_channel_id and campaign.parent_channel_id != str(ctx.channel.id):
             delete_campaign(campaign.parent_channel_id)
+        if campaign.setup_channel_id and campaign.setup_channel_id != str(ctx.channel.id):
+            delete_campaign(campaign.setup_channel_id)
 
         await ctx.send(f"**{name}** has ended. The tale is concluded.\nUse `!newcampaign` to start a new adventure.")
 
-        # Archive the thread if we're in one
+        # Archive the thread/forum post if we're in one
         if isinstance(ctx.channel, discord.Thread):
             try:
                 await ctx.channel.edit(archived=True)
             except discord.Forbidden:
                 pass
 
-            # Also notify the parent channel
-            if campaign.parent_channel_id:
+            # Notify the parent/setup channel
+            notify_channel_id = campaign.parent_channel_id or campaign.setup_channel_id
+            if notify_channel_id:
                 try:
-                    parent = self.bot.get_channel(int(campaign.parent_channel_id))
+                    parent = self.bot.get_channel(int(notify_channel_id))
                     if parent:
                         await parent.send(f"**{name}** has ended. The game thread has been archived.")
                 except Exception:
@@ -555,7 +639,9 @@ class CampaignCog(commands.Cog, name="Campaign"):
             lines.append(f"DM: <@{campaign.dm_id}>")
         if campaign.starting_level > 1:
             lines.append(f"Starting Level: **{campaign.starting_level}**")
-        if campaign.thread_id:
+        if campaign.forum_post_id:
+            lines.append(f"Forum Post: <#{campaign.forum_post_id}>")
+        elif campaign.thread_id:
             lines.append(f"Game Thread: <#{campaign.thread_id}>")
         if campaign.description:
             lines.append(f"*{campaign.description}*")

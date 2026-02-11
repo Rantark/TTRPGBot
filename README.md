@@ -1072,31 +1072,63 @@ Death saves reset automatically when a character regains HP or takes a long rest
 
 ---
 
-## Game Threads
+## Game Threads & Forum Posts
 
-When a campaign starts, the bot creates a **Discord thread** to keep the game organized and separate from other channel activity.
+When a campaign starts, the bot creates a **Discord forum post** or **thread** to keep the game organized and separate from other channel activity.
+
+### Forum Posts (Recommended)
+
+If you have a Discord forum channel for campaigns, set `CAMPAIGN_FORUM_ID` in your `.env` file:
+
+```
+CAMPAIGN_FORUM_ID=1234567890123456789
+```
+
+To get the Forum Channel ID:
+1. Enable Developer Mode in Discord (User Settings > Advanced)
+2. Right-click your forum channel
+3. Click "Copy User ID"
+
+When `!startcampaign` is used:
+1. The bot creates a **forum post** in your designated forum channel
+2. The opening narration appears in the forum post
+3. All gameplay happens in that organized forum post
+4. The setup channel gets a link to the forum post
+
+### Thread Fallback
+
+If no forum is configured, the bot falls back to creating a **public thread** in the current channel (same as before).
 
 ### How It Works
 
-1. **Setup phase** (`!newcampaign`, `!createchar`) happens in the main channel
-2. When the DM types `!startcampaign`, the bot creates a public thread named after the campaign
-3. All gameplay commands (`!action`, `!roll`, `!check`, etc.) should be used **in the thread**
-4. When the campaign ends (`!endcampaign`), the thread is archived
+1. **Setup phase** (`!newcampaign`, `!createchar`) happens in any channel
+2. When the DM types `!startcampaign`:
+   - With `CAMPAIGN_FORUM_ID` set: creates a forum post in the designated forum
+   - Without forum: creates a public thread in the current channel
+   - Without thread permissions: plays directly in the current channel
+3. All gameplay commands (`!action`, `!roll`, `!check`, etc.) should be used **in the forum post/thread**
+4. When the campaign ends (`!endcampaign`), the forum post/thread is archived
 
-### Thread Permissions
+### Required Permissions
 
-The bot needs these Discord permissions to create threads:
+The bot needs these Discord permissions:
 
+**For forum posts:**
+- **Create Posts** — to create forum posts
+- **Send Messages in Threads** — to post in the forum post
+- **Manage Threads** — to archive when the campaign ends
+
+**For threads (fallback):**
 - **Create Public Threads** — to create the game thread
 - **Send Messages in Threads** — to post in the thread
 - **Manage Threads** — to archive the thread when the campaign ends
 - **Add Reactions** — for `!suggestcampaign` emoji reactions
 
-If the bot lacks thread permissions, it falls back gracefully to running the campaign in the main channel (no thread is created).
+If the bot lacks permissions, it falls back gracefully: forum post > thread > playing in the channel directly.
 
 ### Multiple Campaigns
 
-Each channel can have one campaign at a time. Since `!startcampaign` creates a thread, the main channel stays clean for other conversations or for starting a new campaign after the current one ends.
+Each channel can have one campaign at a time. With forum posts, all campaigns are organized in one forum channel, making them easy to find and browse.
 
 ---
 
@@ -1374,6 +1406,7 @@ Cache stats — read: 3200, created: 150, uncached: 85, output: 312
 | `DISCORD_TOKEN` | Yes | — | Your Discord bot token |
 | `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
 | `BOT_OWNER_ID` | No | — | Your Discord user ID (enables owner-only commands) |
+| `CAMPAIGN_FORUM_ID` | No | — | Forum channel ID for auto-creating campaign posts |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-20250514` | Which Claude model to use |
 | `COMMAND_PREFIX` | No | `!` | Bot command prefix |
 
