@@ -2,15 +2,20 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __version_info__ = {
     'major': 1,
     'minor': 2,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.2.1** - February 12, 2026
+- Full error tracebacks now sent to Discord instead of just console logs
+- New !debugforum command shows forum config, channel access, and bot permissions
+- Better error messages for forum post creation failures
+
 **Version 1.2.0** - February 11, 2026
 - Admin commands: !restart, !update, !shutdown, !checkupdate now use Discord admin permissions
 - No longer requires BOT_OWNER_ID — any server admin can manage the bot

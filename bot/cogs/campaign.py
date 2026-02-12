@@ -321,7 +321,13 @@ class CampaignCog(commands.Cog, name="Campaign"):
                 else:
                     await ctx.send("Configured forum channel not found. Falling back to thread.")
             except (ValueError, Exception) as e:
-                await ctx.send(f"Error accessing forum channel. Falling back to thread.")
+                import traceback
+                tb = traceback.format_exc()
+                await ctx.send(
+                    f"❌ **Error Accessing Forum Channel**\n"
+                    f"```\n{tb[-1500:] if len(tb) > 1500 else tb}\n```\n"
+                    f"Falling back to thread..."
+                )
 
         # Fall back to thread-based or channel-based start
         await self._start_in_thread(ctx, campaign)
@@ -369,15 +375,22 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
             await self._send_long_to(thread, narration)
 
-        except discord.Forbidden:
+        except discord.Forbidden as e:
             await ctx.send(
-                "I don't have permission to create forum posts.\n"
-                "Please give me 'Create Posts' permission in the forum channel.\n"
-                "Falling back to thread..."
+                f"❌ **Forum Permission Error**\n"
+                f"```\n{type(e).__name__}: {e}\n```\n"
+                f"Fix: Give me 'Create Posts' permission in the forum channel.\n"
+                f"Falling back to thread..."
             )
             await self._start_in_thread(ctx, campaign)
         except Exception as e:
-            await ctx.send(f"Failed to create forum post: {e}\nFalling back to thread...")
+            import traceback
+            tb = traceback.format_exc()
+            await ctx.send(
+                f"❌ **Forum Post Creation Failed**\n"
+                f"```\n{tb[-1500:] if len(tb) > 1500 else tb}\n```\n"
+                f"Falling back to thread..."
+            )
             await self._start_in_thread(ctx, campaign)
 
     async def _start_in_thread(self, ctx: commands.Context, campaign: Campaign):
@@ -699,6 +712,70 @@ class CampaignCog(commands.Cog, name="Campaign"):
             await ctx.send("Campaign forum cleared. `!startcampaign` will create threads instead.")
         else:
             await ctx.send("No forum channel was set. Nothing to clear.")
+
+    @commands.command(name="debugforum")
+    @commands.has_permissions(administrator=True)
+    async def debug_forum(self, ctx: commands.Context):
+        """(Admin) Debug forum channel configuration.
+
+        Shows current forum settings and tests access.
+        Usage: !debugforum
+        """
+        import traceback
+
+        lines = ["**Forum Debug Info:**\n"]
+
+        # Check .env setting
+        env_forum_id = os.getenv("CAMPAIGN_FORUM_ID")
+        lines.append(f"`.env CAMPAIGN_FORUM_ID`: `{env_forum_id or 'NOT SET'}`")
+
+        # Check guild settings
+        guild_settings = load_guild_settings(str(ctx.guild.id))
+        settings_forum_id = guild_settings.get("campaign_forum_id")
+        lines.append(f"`!setforum` setting: `{settings_forum_id or 'NOT SET'}`")
+
+        # Determine which ID will be used
+        active_id = settings_forum_id or env_forum_id
+        lines.append(f"\nActive forum ID: `{active_id or 'NONE - will use threads instead'}`")
+
+        if active_id:
+            lines.append(f"\n**Testing channel access...**")
+            try:
+                channel = self.bot.get_channel(int(active_id))
+                if channel is None:
+                    lines.append(f"❌ Channel not found! ID `{active_id}` returned None.")
+                    lines.append("Bot may not be in that server or channel doesn't exist.")
+                elif isinstance(channel, discord.ForumChannel):
+                    lines.append(f"✅ Found forum channel: **{channel.name}**")
+
+                    # Check permissions
+                    perms = channel.permissions_for(ctx.guild.me)
+                    lines.append(f"\n**Bot Permissions in forum:**")
+                    lines.append(f"View Channel: {'✅' if perms.view_channel else '❌'}")
+                    lines.append(f"Send Messages: {'✅' if perms.send_messages else '❌'}")
+                    lines.append(f"Create Posts: {'✅' if perms.create_public_threads else '❌'}")
+                    lines.append(f"Send in Threads: {'✅' if perms.send_messages_in_threads else '❌'}")
+                    lines.append(f"Embed Links: {'✅' if perms.embed_links else '❌'}")
+
+                    if not perms.create_public_threads:
+                        lines.append(f"\n⚠️ **Missing 'Create Posts' permission** — this is why forum posts fail!")
+                else:
+                    lines.append(f"❌ Channel found but it's a `{type(channel).__name__}`, not a ForumChannel!")
+                    lines.append(f"Channel name: **{channel.name}**")
+                    lines.append("Make sure you're pointing to a Forum channel, not a text channel.")
+            except ValueError:
+                lines.append(f"❌ Invalid channel ID format: `{active_id}`")
+            except Exception as e:
+                tb = traceback.format_exc()
+                lines.append(f"❌ Error checking channel:\n```\n{tb[-1000:]}\n```")
+        else:
+            lines.append("\n⚠️ No forum configured. Use `!setforum #channel` or set `CAMPAIGN_FORUM_ID` in `.env`")
+
+        # Also show current channel info
+        lines.append(f"\n**Current channel type:** `{type(ctx.channel).__name__}`")
+        lines.append(f"**Current channel ID:** `{ctx.channel.id}`")
+
+        await ctx.send("\n".join(lines))
 
     async def _send_long(self, ctx: commands.Context, text: str):
         """Send a message to ctx, splitting if it exceeds Discord's limit."""

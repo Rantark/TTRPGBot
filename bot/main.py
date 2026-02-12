@@ -114,26 +114,47 @@ async def on_ready():
 
 
 @bot.event
-async def on_command_error(ctx: commands.Context, error: commands.CommandError):
-    """Global error handler for commands."""
+async def on_command_error(ctx, error):
+    """Global error handler — sends full error details to Discord."""
+    import traceback
+
+    # Ignore command not found
     if isinstance(error, commands.CommandNotFound):
-        return  # Silently ignore unknown commands
-    if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"Missing argument: `{error.param.name}`. Check `!commands` for usage.")
-        return
-    if isinstance(error, commands.BadArgument):
-        await ctx.send(f"Invalid argument. Check `!commands` for usage.")
-        return
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("This command requires **Administrator** permission.")
-        return
-    if isinstance(error, commands.CommandInvokeError):
-        logger.exception(f"Command error in {ctx.command}: {error.original}")
-        await ctx.send(f"Something went wrong: {type(error.original).__name__}: {error.original}")
         return
 
-    logger.exception(f"Unhandled command error: {error}")
-    await ctx.send("An unexpected error occurred. Please try again.")
+    # Ignore check failures (permissions etc) — send friendly message
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send(f"❌ You don't have permission to use that command.")
+        return
+
+    # Missing required argument
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ Missing argument: `{error.param.name}`")
+        return
+
+    # Get the original exception if wrapped
+    original = getattr(error, 'original', error)
+
+    # Format full traceback
+    tb = "".join(traceback.format_exception(type(original), original, original.__traceback__))
+
+    # Log it
+    logger.error(f"Command error in {ctx.command}: {error}")
+
+    # Send to Discord (truncate if too long for Discord's 2000 char limit)
+    error_msg = (
+        f"❌ **Error in `!{ctx.command}`**\n"
+        f"```\n{tb[-1800:] if len(tb) > 1800 else tb}\n```"
+    )
+
+    try:
+        await ctx.send(error_msg)
+    except discord.Forbidden:
+        # Can't send in channel — try DM to command author
+        try:
+            await ctx.author.send(error_msg)
+        except Exception:
+            pass
 
 
 def main():
