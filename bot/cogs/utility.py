@@ -219,6 +219,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!suggestcampaign` — Ask Claude to suggest campaign ideas\n"
                 "`!startcampaign` — DM begins the adventure (creates forum post/thread)\n"
                 "`!endcampaign` — DM ends the campaign (archives post/thread)\n"
+                "`!forceend` — *(Admin)* Force end a campaign if DM is absent\n"
                 "`!campaigninfo` — View campaign status\n"
                 "`!setforum #channel` — *(Admin)* Set forum channel for campaign posts\n"
                 "`!clearforum` — *(Admin)* Remove forum setting (use threads instead)\n"
@@ -375,7 +376,7 @@ class UtilityCog(commands.Cog, name="Utility"):
 
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
-        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forum": "campaign",
+        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",

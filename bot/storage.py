@@ -54,6 +54,20 @@ def save_campaign(campaign: Campaign):
         logger.exception(f"Failed to save campaign for channel {campaign.channel_id}")
 
 
+def save_campaign_by_id(campaign: Campaign, channel_id: str):
+    """Save a campaign under a specific channel ID (used for forum post tracking)."""
+    _ensure_dir()
+    path = _campaign_path(channel_id)
+    try:
+        data = campaign.to_dict()
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        logger.exception(f"Failed to save campaign under channel {channel_id}")
+
+
 def load_campaign(channel_id: str) -> Campaign | None:
     """Load a campaign from disk.
 

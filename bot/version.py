@@ -2,15 +2,22 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 __version_info__ = {
     'major': 1,
-    'minor': 2,
-    'patch': 1
+    'minor': 3,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.3.0** - February 12, 2026
+- Multiple concurrent campaigns: each gets its own forum post, all independent
+- Campaign tracking moved to forum post thread ID as primary key
+- New !forceend command lets admins end campaigns when DM is absent
+- !newcampaign blocked inside threads (must use a regular channel)
+- Improved campaign cleanup with set-based save file deletion
+
 **Version 1.2.1** - February 12, 2026
 - Full error tracebacks now sent to Discord instead of just console logs
 - New !debugforum command shows forum config, channel access, and bot permissions

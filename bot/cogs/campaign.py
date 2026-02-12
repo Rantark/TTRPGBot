@@ -8,7 +8,7 @@ import discord
 from discord.ext import commands
 
 from bot.models.campaign import Campaign, CampaignPhase
-from bot.storage import save_campaign, load_campaign, delete_campaign, load_guild_settings, save_guild_settings
+from bot.storage import save_campaign, save_campaign_by_id, load_campaign, delete_campaign, load_guild_settings, save_guild_settings
 
 
 class CampaignCog(commands.Cog, name="Campaign"):
@@ -18,12 +18,29 @@ class CampaignCog(commands.Cog, name="Campaign"):
         self.bot = bot
 
     def _get_campaign(self, ctx: commands.Context) -> Campaign | None:
-        return load_campaign(str(ctx.channel.id))
+        """Load campaign for the current channel.
+
+        Checks the current channel ID first. If we're in a thread,
+        also checks the thread ID directly (for forum post campaigns).
+        """
+        # Direct lookup by current channel/thread ID
+        campaign = load_campaign(str(ctx.channel.id))
+        if campaign:
+            return campaign
+
+        # If we're in a thread, the campaign might be stored under the thread ID
+        if isinstance(ctx.channel, discord.Thread):
+            campaign = load_campaign(str(ctx.channel.id))
+            if campaign:
+                return campaign
+
+        return None
 
     def _get_or_create_campaign(self, ctx: commands.Context) -> Campaign:
         campaign = load_campaign(str(ctx.channel.id))
         if campaign is None:
             campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id))
+            campaign.setup_channel_id = str(ctx.channel.id)
         return campaign
 
     @commands.command(name="newcampaign")
@@ -32,6 +49,14 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
         Usage: !newcampaign My Epic Adventure
         """
+        # If we're already in a forum post thread, don't allow newcampaign there
+        if isinstance(ctx.channel, discord.Thread):
+            await ctx.send(
+                "Use `!newcampaign` in a regular channel, not inside a forum post.\n"
+                "The bot will automatically create a forum post when you `!startcampaign`."
+            )
+            return
+
         existing = self._get_campaign(ctx)
         if existing and existing.phase != CampaignPhase.NONE:
             await ctx.send("There's already an active campaign in this channel. "
@@ -40,6 +65,7 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
         campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id))
         campaign.dm_id = str(ctx.author.id)
+        campaign.setup_channel_id = str(ctx.channel.id)
         campaign.phase = CampaignPhase.PITCHING
 
         if name:
@@ -333,42 +359,54 @@ class CampaignCog(commands.Cog, name="Campaign"):
         await self._start_in_thread(ctx, campaign)
 
     async def _start_in_forum(self, ctx: commands.Context, campaign: Campaign, forum_channel: discord.ForumChannel):
-        """Start the campaign by creating a forum post."""
+        """Start the campaign by creating a new forum post thread."""
         campaign_name = campaign.name or "D&D Campaign"
         player_mentions = ", ".join(f"<@{pid}>" for pid in campaign.characters.keys())
 
         await ctx.send(f"Creating forum post for **{campaign_name}**...")
 
         try:
+            # Create the forum post
             forum_post = await forum_channel.create_thread(
                 name=f"{campaign_name}",
                 content=(
-                    f"**Campaign: {campaign_name}**\n\n"
+                    f"# {campaign_name}\n\n"
                     f"**DM:** <@{campaign.dm_id}>\n"
                     f"**Players:** {player_mentions}\n\n"
-                    f"*Adventure loading...*"
+                    f"*The adventure is about to begin...*"
                 ),
                 reason=f"D&D Campaign: {campaign_name}",
             )
 
-            # forum_post is a (Thread, Message) tuple from ForumChannel.create_thread
+            # Handle both tuple and direct Thread returns
             thread = forum_post[0] if isinstance(forum_post, tuple) else forum_post
 
+            # Update campaign tracking
+            old_channel_id = campaign.channel_id
             campaign.forum_post_id = str(thread.id)
             campaign.thread_id = str(thread.id)
-            campaign.parent_channel_id = str(ctx.channel.id)
-            campaign.phase = CampaignPhase.ACTIVE
-            save_campaign(campaign)
+            campaign.setup_channel_id = str(ctx.channel.id)
+            campaign.parent_channel_id = str(forum_channel.id)
 
-            # Announce in the setup channel
+            # IMPORTANT: Update the campaign's primary channel_id to the forum post thread
+            # This allows all gameplay commands to find it when used inside the forum post
+            campaign.channel_id = str(thread.id)
+            campaign.phase = CampaignPhase.ACTIVE
+
+            # Save under BOTH the new forum post thread ID AND the old setup channel ID
+            # This way it's findable from both locations
+            save_campaign(campaign)  # Saves under campaign.channel_id (forum post thread ID)
+            save_campaign_by_id(campaign, old_channel_id)  # Also save under setup channel
+
+            # Announce in the setup channel with link to forum post
             await ctx.send(
                 f"**{campaign_name}** has begun!\n"
                 f"Forum Post: {thread.mention}\n"
-                f"All gameplay will happen there. Head over to begin your adventure!\n"
+                f"All gameplay happens there — head over to begin your adventure!\n"
                 f"Players: {player_mentions}"
             )
 
-            # Generate opening narration in the forum post
+            # Generate and send opening narration in the forum post
             async with ctx.typing():
                 narration = await self.bot.dm_engine.narrate_start(campaign)
             save_campaign(campaign)
@@ -440,6 +478,42 @@ class CampaignCog(commands.Cog, name="Campaign"):
         # Send narration to thread (or channel if no thread)
         await self._send_long_to(target, narration)
 
+    def _cleanup_campaign(self, campaign: Campaign, current_channel_id: str):
+        """Delete all save files associated with a campaign."""
+        ids_to_delete = set()
+        ids_to_delete.add(current_channel_id)
+        if campaign.channel_id:
+            ids_to_delete.add(campaign.channel_id)
+        if campaign.thread_id:
+            ids_to_delete.add(campaign.thread_id)
+        if campaign.forum_post_id:
+            ids_to_delete.add(campaign.forum_post_id)
+        if campaign.setup_channel_id:
+            ids_to_delete.add(campaign.setup_channel_id)
+        if campaign.parent_channel_id:
+            ids_to_delete.add(campaign.parent_channel_id)
+
+        for cid in ids_to_delete:
+            delete_campaign(cid)
+
+    async def _archive_and_notify(self, ctx: commands.Context, campaign: Campaign, name: str):
+        """Archive thread/forum post and notify setup channel."""
+        if isinstance(ctx.channel, discord.Thread):
+            try:
+                await ctx.channel.edit(archived=True)
+            except discord.Forbidden:
+                pass
+
+            # Notify the setup/parent channel
+            notify_id = campaign.setup_channel_id or campaign.parent_channel_id
+            if notify_id:
+                try:
+                    notify_ch = self.bot.get_channel(int(notify_id))
+                    if notify_ch:
+                        await notify_ch.send(f"**{name}** has ended. The forum post has been archived.")
+                except Exception:
+                    pass
+
     @commands.command(name="endcampaign")
     async def end_campaign(self, ctx: commands.Context):
         """DM ends the campaign permanently. Archives the game thread/forum post if one exists."""
@@ -453,35 +527,41 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
         name = campaign.name or "Unnamed Campaign"
 
-        # Delete campaign data (all save files: channel, thread, forum post)
-        delete_campaign(str(ctx.channel.id))
-        if campaign.thread_id and campaign.thread_id != str(ctx.channel.id):
-            delete_campaign(campaign.thread_id)
-        if campaign.forum_post_id and campaign.forum_post_id != str(ctx.channel.id):
-            delete_campaign(campaign.forum_post_id)
-        if campaign.parent_channel_id and campaign.parent_channel_id != str(ctx.channel.id):
-            delete_campaign(campaign.parent_channel_id)
-        if campaign.setup_channel_id and campaign.setup_channel_id != str(ctx.channel.id):
-            delete_campaign(campaign.setup_channel_id)
+        # Delete all save files for this campaign
+        self._cleanup_campaign(campaign, str(ctx.channel.id))
 
-        await ctx.send(f"**{name}** has ended. The tale is concluded.\nUse `!newcampaign` to start a new adventure.")
+        await ctx.send(
+            f"**{name}** has ended. The tale is concluded.\n"
+            f"Use `!newcampaign` to start a new adventure."
+        )
 
-        # Archive the thread/forum post if we're in one
-        if isinstance(ctx.channel, discord.Thread):
-            try:
-                await ctx.channel.edit(archived=True)
-            except discord.Forbidden:
-                pass
+        await self._archive_and_notify(ctx, campaign, name)
 
-            # Notify the parent/setup channel
-            notify_channel_id = campaign.parent_channel_id or campaign.setup_channel_id
-            if notify_channel_id:
-                try:
-                    parent = self.bot.get_channel(int(notify_channel_id))
-                    if parent:
-                        await parent.send(f"**{name}** has ended. The game thread has been archived.")
-                except Exception:
-                    pass
+    @commands.command(name="forceend")
+    @commands.has_permissions(administrator=True)
+    async def force_end_campaign(self, ctx: commands.Context):
+        """(Admin) Force end a campaign even if the DM is absent.
+
+        Usage: !forceend
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        name = campaign.name or "Unnamed Campaign"
+        dm_mention = f"<@{campaign.dm_id}>" if campaign.dm_id else "Unknown"
+
+        # Delete all save files for this campaign
+        self._cleanup_campaign(campaign, str(ctx.channel.id))
+
+        await ctx.send(
+            f"**{name}** has been force-ended by {ctx.author.display_name}.\n"
+            f"(Original DM: {dm_mention})\n"
+            f"Use `!newcampaign` to start a new adventure."
+        )
+
+        await self._archive_and_notify(ctx, campaign, name)
 
     @commands.command(name="suggestcampaign")
     async def suggest_campaign(self, ctx: commands.Context):
