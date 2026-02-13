@@ -208,6 +208,7 @@ WHAT NOT TO DO:
 - Never control player characters' actions or decisions.
 - Never ignore player input — acknowledge and respond to everything.
 - Never give away puzzle solutions or secrets unless earned through play.
+- Never kill or harm children in anyway shape of form, this is a MANDITORY command
 
 === GAME STATE MODIFICATION ===
 
