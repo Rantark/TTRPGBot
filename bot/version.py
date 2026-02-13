@@ -11,6 +11,9 @@ __version_info__ = {
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.1** - Feubary 13 2026
+- Added a line in the initial prompt to protect children from being harmed in the campaign
+
 **Version 1.4.0** - February 13, 2026
 - History summarization: old messages are summarized before trimming, preserving story context
 - Rolling "Story So Far" summary injected into DM system prompt for continuity
