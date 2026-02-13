@@ -223,7 +223,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!campaigninfo` — View campaign status\n"
                 "`!setforum #channel` — *(Admin)* Set forum channel for campaign posts\n"
                 "`!clearforum` — *(Admin)* Remove forum setting (use threads instead)\n"
-                "`!debugforum` — *(Admin)* Debug forum channel config and permissions"
+                "`!debugforum` — *(Admin)* Debug forum channel config and permissions\n"
+                "`!setpace <async|live>` — *(DM/Admin)* Set campaign pace (async=no timeout, live=30min AFK)"
             ),
         },
         "character": {
@@ -261,6 +262,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!inspect <target>` — Examine something closely *(queued)*\n"
                 "`!talk <NPC>` — Speak to an NPC *(queued)*\n"
                 "`!pass` — Do nothing this round\n"
+                "`!afk` — Mark yourself AFK (auto-pass until you act)\n"
                 "`!undo` — Cancel your pending action before the round resolves\n"
                 "`!pending` — See who hasn't acted yet\n"
                 "`!resolve` — *(DM)* Force the round to resolve now\n"
@@ -376,9 +378,9 @@ class UtilityCog(commands.Cog, name="Utility"):
 
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
-        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign",
+        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
-        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay",
+        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",

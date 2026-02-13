@@ -278,6 +278,10 @@ def _build_system_blocks(campaign: Campaign, extra_system: str = "") -> list[dic
     # Changes between rounds but is the same for all players within a round.
     context = ""
     context += f"CAMPAIGN: {campaign.name}\n"
+
+    # Inject rolling story summary if available
+    if campaign.story_summary:
+        context += f"\n=== STORY SO FAR ===\n{campaign.story_summary}\n"
     if campaign.description:
         context += f"CAMPAIGN DESCRIPTION: {campaign.description}\n"
     context += f"\n=== PARTY STATUS ===\n{campaign.get_party_summary()}\n"
@@ -367,6 +371,7 @@ class DMEngine:
         Uses prompt caching on system prompt and conversation history
         to minimize token costs across a session.
         """
+        await self.summarize_and_trim(campaign)
         system = _build_system_blocks(campaign)
         messages = _build_messages(
             campaign, player_action, player_name,
@@ -416,6 +421,7 @@ class DMEngine:
 
         Used for scene transitions, events, time passing, etc.
         """
+        await self.summarize_and_trim(campaign)
         system = _build_system_blocks(campaign)
         messages = []
 
@@ -521,6 +527,105 @@ class DMEngine:
         except Exception as e:
             logger.exception("Error generating simple response")
             return f"*The DM's crystal ball flickers...* (Error: {type(e).__name__})"
+
+    async def summarize_and_trim(self, campaign: Campaign):
+        """Summarize old messages before trimming history to preserve story context.
+
+        When history exceeds 80 messages, summarize the oldest 20 and keep 60.
+        The summary is appended to campaign.story_summary for the system prompt.
+        """
+        THRESHOLD = 80
+        KEEP = 60
+
+        if len(campaign.message_history) <= THRESHOLD:
+            return
+
+        to_summarize = campaign.message_history[:THRESHOLD - KEEP]
+        campaign.message_history = campaign.message_history[THRESHOLD - KEEP:]
+        campaign.total_messages_processed += len(to_summarize)
+
+        # Build text from messages to summarize
+        summary_text = ""
+        for msg in to_summarize:
+            role = msg["role"].upper()
+            content = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
+            summary_text += f"{role}: {content[:300]}\n"
+
+        existing = f"Previous summary:\n{campaign.story_summary}\n\n" if campaign.story_summary else ""
+
+        prompt = (
+            f"{existing}"
+            f"Summarize the following D&D session transcript into a concise narrative summary "
+            f"(3-5 paragraphs). Capture: key plot events, NPC interactions, combat outcomes, "
+            f"decisions made, items found, and current situation. Write in past tense.\n\n"
+            f"{summary_text}"
+        )
+
+        try:
+            import asyncio
+            response = await asyncio.to_thread(
+                self.client.messages.create,
+                model=self.model,
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            campaign.story_summary = response.content[0].text
+            logger.info(
+                f"Summarized {len(to_summarize)} messages, "
+                f"history now {len(campaign.message_history)} messages"
+            )
+        except Exception:
+            logger.exception("Failed to summarize history, keeping trimmed history without summary update")
+
+    async def get_rules_response(self, campaign: Campaign, question: str,
+                                  player_name: str, character_summary: str = "") -> str:
+        """Answer a rules/meta question WITHOUT writing to campaign history.
+
+        Reads the last 10 history messages for context but does not append
+        the question or answer to message_history.
+        """
+        system = _build_system_blocks(campaign)
+
+        # Build messages from last 10 history entries for context
+        messages = []
+        recent = campaign.message_history[-10:] if campaign.message_history else []
+        for i, msg in enumerate(recent):
+            entry = {"role": msg["role"]}
+            if i == len(recent) - 1:
+                entry["content"] = [
+                    {"type": "text", "text": msg["content"], "cache_control": CACHE_BREAKPOINT}
+                ]
+            else:
+                entry["content"] = msg["content"]
+            messages.append(entry)
+
+        # Add the question
+        user_content = f"[Player: {player_name}"
+        if character_summary:
+            user_content += f" — {character_summary}"
+        user_content += (
+            f"]\n[OUT-OF-CHARACTER QUESTION — Do NOT advance the story, "
+            f"do NOT narrate anything. Just answer this rules/meta question clearly.]\n"
+            f"{question}"
+        )
+        messages.append({"role": "user", "content": user_content})
+
+        try:
+            import asyncio
+            response = await asyncio.to_thread(
+                self.client.messages.create,
+                model=self.model,
+                max_tokens=1024,
+                system=system,
+                messages=messages,
+            )
+            return response.content[0].text
+        except anthropic.APIError as e:
+            logger.exception("Anthropic API error")
+            return f"*The DM's crystal ball flickers...* (API error: {e.message})"
+        except Exception as e:
+            logger.exception("Unexpected error calling Claude")
+            return f"*The DM's crystal ball goes dark...* (Error: {type(e).__name__})"
 
     async def narrate_start(self, campaign: Campaign) -> str:
         """Generate the opening narration for a campaign."""

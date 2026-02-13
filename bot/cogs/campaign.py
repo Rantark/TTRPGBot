@@ -7,7 +7,7 @@ import re
 import discord
 from discord.ext import commands
 
-from bot.models.campaign import Campaign, CampaignPhase
+from bot.models.campaign import Campaign, CampaignPhase, CampaignPace
 from bot.storage import save_campaign, save_campaign_by_id, load_campaign, delete_campaign, load_guild_settings, save_guild_settings
 
 
@@ -562,6 +562,50 @@ class CampaignCog(commands.Cog, name="Campaign"):
         )
 
         await self._archive_and_notify(ctx, campaign, name)
+
+    @commands.command(name="setpace")
+    async def set_pace(self, ctx: commands.Context, *, pace: str = ""):
+        """DM or Admin: Set the campaign pace mode.
+
+        ASYNC = no timeout, players take as long as they need (default).
+        LIVE = 30-minute AFK timeout; idle players auto-pass.
+
+        Usage: !setpace live
+        Usage: !setpace async
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        is_dm = str(ctx.author.id) == campaign.dm_id
+        is_admin = ctx.author.guild_permissions.administrator if ctx.guild else False
+        if not is_dm and not is_admin:
+            await ctx.send("Only the DM or an admin can change the campaign pace.")
+            return
+
+        pace = pace.strip().lower()
+        if pace not in ("async", "live"):
+            await ctx.send(
+                "**Usage:** `!setpace <async|live>`\n"
+                f"Current pace: **{campaign.pace.value}**\n\n"
+                "**async** — No timeout, players take as long as they need (default)\n"
+                "**live** — 30-minute AFK timeout; idle players auto-pass each round"
+            )
+            return
+
+        campaign.pace = CampaignPace(pace)
+        save_campaign(campaign)
+        if pace == "live":
+            await ctx.send(
+                "Campaign pace set to **LIVE**.\n"
+                "Players who haven't acted within 30 minutes will auto-pass."
+            )
+        else:
+            await ctx.send(
+                "Campaign pace set to **ASYNC**.\n"
+                "No timeout — players can take as long as they need."
+            )
 
     @commands.command(name="suggestcampaign")
     async def suggest_campaign(self, ctx: commands.Context):

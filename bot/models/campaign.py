@@ -4,6 +4,11 @@ from enum import Enum
 from bot.models.character import Character
 
 
+class CampaignPace(str, Enum):
+    ASYNC = "async"  # No timeout — players take as long as they need
+    LIVE = "live"    # 30-minute AFK timeout per round
+
+
 class CampaignPhase(str, Enum):
     NONE = "none"            # No campaign yet
     PITCHING = "pitching"    # Proposing/voting on campaign concepts
@@ -179,6 +184,12 @@ class Campaign:
         # RP scene coordination: queue actions until all players act or pass
         self.pending_actions: dict[str, str] = {}  # player_id -> action text
         self.passed_players: list[str] = []  # player_ids who passed this round
+        # History summarization — rolling summary of trimmed messages
+        self.story_summary: str = ""
+        self.total_messages_processed: int = 0
+        # Campaign pace and AFK tracking
+        self.pace = CampaignPace.ASYNC
+        self.last_action_time: float = 0.0  # time.time() of last player action
 
     def get_character(self, player_id: str) -> Character | None:
         return self.characters.get(player_id)
@@ -269,6 +280,10 @@ class Campaign:
             "setup_channel_id": self.setup_channel_id,
             "pending_actions": self.pending_actions,
             "passed_players": self.passed_players,
+            "story_summary": self.story_summary,
+            "total_messages_processed": self.total_messages_processed,
+            "pace": self.pace.value,
+            "last_action_time": self.last_action_time,
         }
 
     @classmethod
@@ -295,4 +310,11 @@ class Campaign:
         c.setup_channel_id = data.get("setup_channel_id", data.get("channel_id"))
         c.pending_actions = data.get("pending_actions", {})
         c.passed_players = data.get("passed_players", [])
+        c.story_summary = data.get("story_summary", "")
+        c.total_messages_processed = data.get("total_messages_processed", 0)
+        try:
+            c.pace = CampaignPace(data.get("pace", "async"))
+        except ValueError:
+            c.pace = CampaignPace.ASYNC
+        c.last_action_time = data.get("last_action_time", 0.0)
         return c

@@ -6,15 +6,19 @@ actions are bundled and sent to Claude as a single prompt so the DM can
 respond to everyone at once without overlapping storylines.
 """
 
-import discord
-from discord.ext import commands
+import time
 
-from bot.models.campaign import CampaignPhase
+import discord
+from discord.ext import commands, tasks
+
+from bot.models.campaign import CampaignPhase, CampaignPace
 from bot.data.rules import ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS, modifier_str
 from bot.dice import parse_and_roll, roll_check, parse_adv_dis
 from bot.dm_engine import parse_action_tags, extract_whispers
-from bot.storage import load_campaign, save_campaign
+from bot.storage import load_campaign, save_campaign, list_campaigns
 from bot.utils.fuzzy_match import suggest_skill, suggest_ability
+
+AFK_TIMEOUT_MINUTES = 30
 
 
 class GameplayCog(commands.Cog, name="Gameplay"):
@@ -22,6 +26,10 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._afk_checker_loop.start()
+
+    def cog_unload(self):
+        self._afk_checker_loop.cancel()
 
     def _get_campaign(self, ctx):
         return load_campaign(str(ctx.channel.id))
@@ -46,6 +54,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
         # Queue the action
         campaign.pending_actions[player_id] = action_text
+        campaign.last_action_time = time.time()
         save_campaign(campaign)
 
         # Tell the channel this player has acted
@@ -168,6 +177,133 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             text = text[split_at:].lstrip("\n")
         if text:
             await ctx.send(text)
+
+    # ------------------------------------------------------------------
+    # AFK timeout checker (LIVE pace only)
+    # ------------------------------------------------------------------
+
+    @tasks.loop(minutes=5)
+    async def _afk_checker_loop(self):
+        """Periodically check all LIVE-pace campaigns for AFK players."""
+        try:
+            await self._check_afk_rounds()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Error in AFK checker loop")
+
+    @_afk_checker_loop.before_loop
+    async def _before_afk_checker(self):
+        await self.bot.wait_until_ready()
+
+    async def _check_afk_rounds(self):
+        """Scan all campaigns for stalled LIVE-pace rounds and auto-resolve."""
+        for channel_id in list_campaigns():
+            campaign = load_campaign(channel_id)
+            if not campaign:
+                continue
+            if campaign.phase != CampaignPhase.ACTIVE:
+                continue
+            if campaign.pace != CampaignPace.LIVE:
+                continue
+            if campaign.combat.active:
+                continue
+            if not campaign.last_action_time:
+                continue
+            if not campaign.pending_actions and not campaign.passed_players:
+                continue
+
+            elapsed = time.time() - campaign.last_action_time
+            if elapsed >= AFK_TIMEOUT_MINUTES * 60:
+                await self._resolve_round_in_channel(channel_id, campaign)
+
+    async def _resolve_round_in_channel(self, channel_id: str, campaign):
+        """Auto-resolve a stalled round by passing all idle players."""
+        channel = self.bot.get_channel(int(channel_id))
+        if not channel:
+            return
+
+        # Auto-pass any players who haven't acted
+        waiting = campaign.get_waiting_player_ids()
+        if not waiting:
+            return
+
+        for pid in waiting:
+            if pid not in campaign.passed_players:
+                campaign.passed_players.append(pid)
+
+        waiting_names = []
+        for pid in waiting:
+            char = campaign.get_character(pid)
+            waiting_names.append(char.name if char else f"<@{pid}>")
+
+        await channel.send(
+            f"**AFK Timeout** — {', '.join(waiting_names)} auto-passed after "
+            f"{AFK_TIMEOUT_MINUTES} minutes of inactivity."
+        )
+
+        # Now resolve the round
+        if not campaign.pending_actions:
+            campaign.clear_pending()
+            save_campaign(campaign)
+            await channel.send("*Everyone passed. The scene continues...*\nSubmit actions when ready.")
+            return
+
+        # Build combined action message
+        action_lines = []
+        for pid, action_text in campaign.pending_actions.items():
+            char = campaign.get_character(pid)
+            char_name = char.name if char else f"Player {pid}"
+            action_lines.append(f"{char_name}: {action_text}")
+
+        for pid in campaign.passed_players:
+            char = campaign.get_character(pid)
+            char_name = char.name if char else f"Player {pid}"
+            action_lines.append(f"{char_name}: [does nothing / waits]")
+
+        combined = "\n".join(action_lines)
+        party_summary = campaign.get_party_summary()
+
+        campaign.clear_pending()
+        save_campaign(campaign)
+
+        raw_response = await self.bot.dm_engine.get_dm_response(
+            campaign,
+            f"[ROUND OF ACTIONS — All players have acted simultaneously]\n{combined}",
+            "Party",
+            party_summary,
+            "Multiple players acted at once. Narrate the results of ALL their actions "
+            "together in one cohesive scene. Address each character's action. "
+            "End with a prompt for what happens next or what the party sees.",
+        )
+
+        campaign.add_session_log(f"Round resolved (AFK timeout): {combined[:120]}")
+
+        # Process action tags
+        clean_text, log_entries = parse_action_tags(raw_response, campaign)
+        clean_text, whispers = extract_whispers(clean_text)
+        for char_name, secret_msg in whispers:
+            player_id = campaign.get_player_id_by_char_name(char_name)
+            if player_id and channel.guild:
+                try:
+                    member = channel.guild.get_member(int(player_id))
+                    if member:
+                        await member.send(f"**DM whispers to {char_name}:**\n{secret_msg}")
+                except Exception:
+                    pass
+        for entry in log_entries:
+            campaign.add_session_log(entry)
+        save_campaign(campaign)
+
+        # Send the response
+        while len(clean_text) > 1990:
+            split_at = clean_text.rfind("\n", 0, 1990)
+            if split_at == -1:
+                split_at = 1990
+            await channel.send(clean_text[:split_at])
+            clean_text = clean_text[split_at:].lstrip("\n")
+        if clean_text:
+            await channel.send(clean_text)
+        await channel.send("*A new round begins.* Submit your actions!")
 
     # ------------------------------------------------------------------
     # RP action commands (queued during non-combat)
@@ -329,6 +465,35 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                 f"**{char_name}** passes (does nothing this round).\n"
                 f"Waiting on: {waiting_mentions}"
             )
+        if campaign.all_players_acted():
+            await self._resolve_round(ctx, campaign)
+
+    @commands.command(name="afk")
+    async def mark_afk(self, ctx: commands.Context):
+        """Mark yourself as AFK — auto-pass all future rounds until you return.
+
+        Use !action, !ic, or any gameplay command to remove AFK status.
+        Usage: !afk
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+
+        player_id = str(ctx.author.id)
+        char = campaign.get_character(player_id)
+        char_name = char.name if char else ctx.author.display_name
+
+        # Auto-pass for this round if they haven't acted
+        if player_id not in campaign.pending_actions and player_id not in campaign.passed_players:
+            campaign.passed_players.append(player_id)
+            save_campaign(campaign)
+
+        await ctx.send(
+            f"**{char_name}** is AFK. They will auto-pass until they submit an action.\n"
+            f"Use any gameplay command (`!action`, `!ic`, etc.) to return."
+        )
+
         if campaign.all_players_acted():
             await self._resolve_round(ctx, campaign)
 
@@ -551,6 +716,9 @@ class GameplayCog(commands.Cog, name="Gameplay"):
     async def ask_dm(self, ctx: commands.Context, *, question: str):
         """Ask the DM a rules or meta question WITHOUT advancing the story.
 
+        Uses a separate API call that does NOT write to conversation history,
+        so rules Q&A never pollutes the story context.
+
         Usage: !ask Can I use sneak attack with a longbow?
         Usage: !ask What level do paladins get Extra Attack?
         Usage: !ask How does grappling work?
@@ -565,18 +733,9 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         char_summary = char.short_summary() if char else ""
 
         async with ctx.typing():
-            response = await self.bot.dm_engine.get_dm_response(
-                campaign,
-                f"[OUT-OF-CHARACTER QUESTION — Do NOT advance the story, do NOT narrate anything. "
-                f"Just answer this rules/meta question clearly.]\n{question}",
-                ctx.author.display_name,
-                char_summary,
-                "This is a rules question, not an in-game action. Answer it helpfully "
-                "without progressing the narrative or describing any in-game events.",
+            response = await self.bot.dm_engine.get_rules_response(
+                campaign, question, ctx.author.display_name, char_summary,
             )
-
-        # Don't log to session log — this isn't story progression
-        save_campaign(campaign)
 
         await self._send_long(ctx, f"**DM (Rules Q&A):**\n{response}")
 

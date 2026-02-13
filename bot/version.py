@@ -2,15 +2,23 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 __version_info__ = {
     'major': 1,
-    'minor': 3,
-    'patch': 1
+    'minor': 4,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.0** - February 13, 2026
+- History summarization: old messages are summarized before trimming, preserving story context
+- Rolling "Story So Far" summary injected into DM system prompt for continuity
+- Campaign pace modes: !setpace async (no timeout) or live (30-min AFK timeout)
+- AFK background checker auto-passes idle players in LIVE pace campaigns
+- New !afk command to mark yourself AFK (auto-pass until you act)
+- Fixed !ask polluting conversation history — rules Q&A now uses isolated API calls
+
 **Version 1.3.1** - February 13, 2026
 - Emoji reaction selection for character creation — click to choose instead of typing
 - Gender (♂️♀️⚧️), ability method (🎲📊🧮), confirm (✅❌) use themed emojis
