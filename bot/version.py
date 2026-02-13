@@ -6,7 +6,7 @@ __version__ = "1.4.0"
 __version_info__ = {
     'major': 1,
     'minor': 4,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
