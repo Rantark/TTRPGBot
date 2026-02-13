@@ -2,7 +2,7 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 __version_info__ = {
     'major': 1,
     'minor': 4,
