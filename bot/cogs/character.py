@@ -1,5 +1,7 @@
 """Character creation and management cog with interactive step-by-step flow."""
 
+import asyncio
+
 import discord
 from discord.ext import commands
 
@@ -48,6 +50,14 @@ def _format_numbered_list(items: list[str], columns: int = 2) -> str:
     return "\n".join(lines)
 
 
+# Emoji sets for character creation reactions
+NUMBER_EMOJIS = [
+    "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣",
+    "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"
+]
+CONFIRM_EMOJIS = ["✅", "❌"]
+
+
 class CharacterCog(commands.Cog, name="Character"):
     """Commands for character creation and management."""
 
@@ -56,6 +66,133 @@ class CharacterCog(commands.Cog, name="Character"):
 
     def _get_campaign(self, ctx: commands.Context):
         return load_campaign(str(ctx.channel.id))
+
+    async def _send_with_reactions(self, ctx, header: str, options: list[str],
+                                    display_options: list[str] = None,
+                                    emojis: list[str] = None, expected_step: str = "",
+                                    overflow: list[str] = None, allow_custom: bool = False):
+        """Send a prompt with emoji reactions for selection.
+
+        Adds reactions to the message and starts a background listener.
+        When a reaction is clicked, routes the selection through _dispatch_step.
+        Falls back to numbered list if more than 10 options.
+
+        Args:
+            options: The actual values sent to the step handler when selected.
+            display_options: What's shown next to each emoji (defaults to options).
+            emojis: Custom emoji set (defaults to NUMBER_EMOJIS).
+            overflow: Extra options shown as text (user must type !cc).
+            allow_custom: If True, hint that custom text input is accepted.
+        """
+        if len(options) > 10 or not options:
+            # Too many for emojis — fall back to numbered list
+            display = display_options or options
+            opt_list = _format_numbered_list(display)
+            await ctx.send(f"{header}\n{opt_list}\n\nReply with: `!cc <number or name>`")
+            return
+
+        if emojis is None:
+            emojis = NUMBER_EMOJIS[:len(options)]
+        else:
+            emojis = emojis[:len(options)]
+
+        display = display_options or options
+
+        lines = [header, ""]
+        for emoji, label in zip(emojis, display):
+            lines.append(f"{emoji} {label}")
+
+        if overflow:
+            lines.append(f"\nAlso available: {', '.join(overflow)}")
+            lines.append("*Type `!cc <name>` to select these*")
+
+        if allow_custom:
+            lines.append("\n*React to choose, or type `!cc <custom value>` for something else*")
+        elif not overflow:
+            lines.append("\n*React to choose, or type `!cc <name>` to select*")
+
+        msg = await ctx.send("\n".join(lines))
+
+        # Add reactions
+        for emoji in emojis:
+            try:
+                await msg.add_reaction(emoji)
+            except discord.HTTPException:
+                pass
+
+        # Start background reaction listener
+        async def _listen():
+            def check(reaction, user):
+                return (
+                    user.id == ctx.author.id
+                    and reaction.message.id == msg.id
+                    and str(reaction.emoji) in emojis
+                )
+
+            try:
+                reaction, _ = await self.bot.wait_for(
+                    "reaction_add", timeout=120.0, check=check
+                )
+                # Verify session is still on the expected step
+                session = _get_session(ctx.author.id)
+                if not session or session.get("step") != expected_step:
+                    return
+                idx = emojis.index(str(reaction.emoji))
+                if idx < len(options):
+                    await self._dispatch_step(ctx, options[idx])
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+        session = _get_session(ctx.author.id)
+        if session:
+            old_task = session.get("_reaction_task")
+            if old_task and not old_task.done():
+                old_task.cancel()
+            session["_reaction_task"] = asyncio.create_task(_listen())
+            _set_session(ctx.author.id, session)
+
+    async def _dispatch_step(self, ctx, choice: str):
+        """Route a creation choice to the appropriate step handler."""
+        session = _get_session(ctx.author.id)
+        if not session:
+            return
+        step = session["step"]
+        char = session["char"]
+
+        if step == "name":
+            await self._step_name(ctx, session, char, choice)
+        elif step == "gender":
+            await self._step_gender(ctx, session, char, choice)
+        elif step == "race":
+            await self._step_race(ctx, session, char, choice)
+        elif step == "draconic_ancestry":
+            await self._step_draconic_ancestry(ctx, session, char, choice)
+        elif step == "half_elf_bonus":
+            await self._step_half_elf_bonus(ctx, session, char, choice)
+        elif step == "class":
+            await self._step_class(ctx, session, char, choice)
+        elif step == "ability_method":
+            await self._step_ability_method(ctx, session, char, choice)
+        elif step == "ability_assign":
+            await self._step_ability_assign(ctx, session, char, choice)
+        elif step == "point_buy":
+            await self._step_point_buy(ctx, session, char, choice)
+        elif step == "background":
+            await self._step_background(ctx, session, char, choice)
+        elif step == "skills":
+            await self._step_skills(ctx, session, char, choice)
+        elif step == "equipment":
+            await self._step_equipment(ctx, session, char, choice)
+        elif step == "weapons":
+            await self._step_weapons(ctx, session, char, choice)
+        elif step == "spells_cantrips":
+            await self._step_spells_cantrips(ctx, session, char, choice)
+        elif step == "spells_level1":
+            await self._step_spells_level1(ctx, session, char, choice)
+        elif step == "backstory":
+            await self._step_backstory(ctx, session, char, choice)
+        elif step == "confirm":
+            await self._step_confirm(ctx, session, char, choice)
 
     # ------------------------------------------------------------------
     # Quick stat commands
@@ -267,6 +404,12 @@ class CharacterCog(commands.Cog, name="Character"):
             await ctx.send("No character creation in progress. Use `!createchar` in a server channel to start.")
             return
 
+        # Cancel any pending reaction listener
+        reaction_task = session.get("_reaction_task")
+        if reaction_task and not reaction_task.done():
+            reaction_task.cancel()
+            session["_reaction_task"] = None
+
         # If used in a guild channel, redirect to DMs
         if ctx.guild is not None:
             await ctx.send(f"{ctx.author.mention} Character creation happens in DMs! Check your DMs and use `!cc` there.")
@@ -320,15 +463,13 @@ class CharacterCog(commands.Cog, name="Character"):
         session["step"] = "gender"
         _set_session(ctx.author.id, session)
 
-        await ctx.send(
-            f"Great, **{char.name}**!\n\n"
-            f"**Step 2: Gender**\n"
-            f"Choose your character's gender:\n"
-            f"`1.` Male\n"
-            f"`2.` Female\n"
-            f"`3.` Non-binary\n"
-            f"Or type anything else (e.g., `!cc Agender`)\n\n"
-            f"Example: `!cc Male`"
+        await self._send_with_reactions(
+            ctx,
+            f"Great, **{char.name}**!\n\n**Step 2: Gender**\nChoose your character's gender:",
+            ["Male", "Female", "Non-binary"],
+            emojis=["♂️", "♀️", "⚧️"],
+            expected_step="gender",
+            allow_custom=True,
         )
 
     async def _step_gender(self, ctx, session, char: Character, choice: str):
@@ -343,14 +484,14 @@ class CharacterCog(commands.Cog, name="Character"):
         _set_session(ctx.author.id, session)
 
         races = get_race_names()
-        race_list = _format_numbered_list(races)
-        await ctx.send(
+        await self._send_with_reactions(
+            ctx,
             f"Gender: **{char.gender}**\n\n"
             f"**Step 3: Race**\n"
-            f"Choose your character's race:\n{race_list}\n\n"
-            f"Each race grants ability score bonuses, traits, and languages.\n"
-            f"Reply with: `!cc <number or name>`\n"
-            f"Example: `!cc Elf`"
+            f"Choose your character's race:\n"
+            f"Each race grants ability score bonuses, traits, and languages.",
+            races,
+            expected_step="race",
         )
 
     async def _step_race(self, ctx, session, char: Character, choice: str):
@@ -376,12 +517,14 @@ class CharacterCog(commands.Cog, name="Character"):
         if char.race == "Dragonborn":
             session["step"] = "draconic_ancestry"
             _set_session(ctx.author.id, session)
-            ancestry_list = _format_numbered_list(list(DRACONIC_ANCESTRIES.keys()))
-            await ctx.send(
-                f"**Dragonborn Ancestry**\n"
-                f"Choose your draconic ancestry:\n{ancestry_list}\n\n"
-                "This determines your breath weapon and damage resistance.\n"
-                "Reply with: `!cc <number or color>`"
+            ancestries = list(DRACONIC_ANCESTRIES.keys())
+            await self._send_with_reactions(
+                ctx,
+                "**Dragonborn Ancestry**\n"
+                "Choose your draconic ancestry:\n"
+                "This determines your breath weapon and damage resistance.",
+                ancestries,
+                expected_step="draconic_ancestry",
             )
             return
 
@@ -457,19 +600,29 @@ class CharacterCog(commands.Cog, name="Character"):
         _set_session(ctx.author.id, session)
 
         classes = get_class_names()
-        class_list = []
-        for cls_name in classes:
+        emoji_classes = classes[:10]
+        overflow_classes = classes[10:]
+
+        # Build display labels with class details
+        display_list = []
+        for cls_name in emoji_classes:
             data = CLASSES[cls_name]
             primary = data.get("primary_ability", "")
-            class_list.append(f"{cls_name} ({primary}) — d{data['hit_die']} HP")
-        class_display = _format_numbered_list(class_list)
+            display_list.append(f"**{cls_name}** ({primary}) — d{data['hit_die']} HP")
 
-        await ctx.send(
-            f"{msg}\n\n"
-            f"**Step 4: Class**\n"
-            f"Choose your class:\n{class_display}\n\n"
-            f"Reply with: `!cc <number or name>`\n"
-            f"Example: `!cc Fighter`"
+        overflow_display = []
+        for cls_name in overflow_classes:
+            data = CLASSES[cls_name]
+            primary = data.get("primary_ability", "")
+            overflow_display.append(f"{cls_name} ({primary}) — d{data['hit_die']} HP")
+
+        await self._send_with_reactions(
+            ctx,
+            f"{msg}\n\n**Step 4: Class**\nChoose your class:",
+            emoji_classes,
+            display_options=display_list,
+            expected_step="class",
+            overflow=overflow_display if overflow_classes else None,
         )
 
     async def _step_class(self, ctx, session, char: Character, choice: str):
@@ -493,16 +646,20 @@ class CharacterCog(commands.Cog, name="Character"):
         session["step"] = "ability_method"
         _set_session(ctx.author.id, session)
 
-        await ctx.send(
+        await self._send_with_reactions(
+            ctx,
             f"**Class: {cls_name}** (d{cls_data['hit_die']})\n"
             f"*{cls_data['description']}*\n\n"
             f"**Step 5: Ability Scores**\n"
-            f"Choose how to generate your ability scores:\n\n"
-            f"`1.` **Roll** — Roll 4d6, drop lowest, 6 times (random)\n"
-            f"`2.` **Standard Array** — Use preset scores {STANDARD_ARRAY}\n"
-            f"`3.` **Point Buy** — Spend 27 points to customize (scores 8-15)\n\n"
-            f"Reply with: `!cc 1`, `!cc 2`, or `!cc 3`\n"
-            f"Example: `!cc roll` or `!cc standard array` or `!cc point buy`"
+            f"Choose how to generate your ability scores:",
+            ["roll", "standard", "point buy"],
+            display_options=[
+                f"**Roll** — Roll 4d6, drop lowest, 6 times",
+                f"**Standard Array** — Use preset scores {STANDARD_ARRAY}",
+                f"**Point Buy** — Spend 27 points to customize (scores 8-15)",
+            ],
+            emojis=["🎲", "📊", "🧮"],
+            expected_step="ability_method",
         )
 
     async def _step_ability_method(self, ctx, session, char: Character, choice: str):
@@ -665,14 +822,17 @@ class CharacterCog(commands.Cog, name="Character"):
         _set_session(ctx.author.id, session)
 
         backgrounds = get_background_names()
-        bg_list = _format_numbered_list(backgrounds)
+        emoji_bgs = backgrounds[:10]
+        overflow_bgs = backgrounds[10:]
 
-        await ctx.send(
-            "\n".join(lines) + "\n\n"
-            f"**Step 6: Background**\n"
-            f"Choose your background (grants 2 skill proficiencies):\n{bg_list}\n\n"
-            f"Reply with: `!cc <number or name>`\n"
-            f"Example: `!cc Soldier`"
+        await ctx.send("\n".join(lines))
+        await self._send_with_reactions(
+            ctx,
+            "**Step 6: Background**\n"
+            "Choose your background (grants 2 skill proficiencies):",
+            emoji_bgs,
+            expected_step="background",
+            overflow=overflow_bgs if overflow_bgs else None,
         )
 
     async def _step_background(self, ctx, session, char: Character, choice: str):
@@ -790,14 +950,14 @@ class CharacterCog(commands.Cog, name="Character"):
             return
 
         current_choice = choices[idx]
-        choice_list = _format_numbered_list(current_choice)
         choice_num = idx + 1
         total = len(choices)
 
-        await ctx.send(
-            f"**Step 8: Starting Equipment** (choice {choice_num}/{total})\n"
-            f"Pick one:\n{choice_list}\n\n"
-            f"Reply with: `!cc <number>`"
+        await self._send_with_reactions(
+            ctx,
+            f"**Step 8: Starting Equipment** (choice {choice_num}/{total})\nPick one:",
+            current_choice,
+            expected_step="equipment",
         )
 
     async def _step_equipment(self, ctx, session, char: Character, choice: str):
@@ -839,24 +999,32 @@ class CharacterCog(commands.Cog, name="Character"):
         label = choice_group["label"]
         options = choice_group["options"]
 
-        lines = [f"**Step 9: Weapon Selection** ({label})"]
-        lines.append("Choose your weapon:\n")
-        for i, weapon_key in enumerate(options, 1):
+        # Build display labels and weapon names for reactions
+        weapon_names = []
+        display_labels = []
+        for weapon_key in options:
             w = WEAPONS.get(weapon_key)
             if w:
                 props = f" ({', '.join(w['properties'])})" if w.get('properties') else ""
-                lines.append(f"`{i:2d}.` **{w['name']}** — {w['damage']} {w['damage_type']}{props}")
+                weapon_names.append(w['name'])
+                display_labels.append(f"**{w['name']}** — {w['damage']} {w['damage_type']}{props}")
             else:
-                lines.append(f"`{i:2d}.` {weapon_key}")
+                weapon_names.append(weapon_key)
+                display_labels.append(weapon_key)
 
-        lines.append(f"\nReply with: `!cc <number>`\nExample: `!cc 1`")
-
+        header = f"**Step 9: Weapon Selection** ({label})\nChoose your weapon:"
         if idx > 0:
             picked_names = [w.get('name', '?') for w in session.get("weapon_picks", [])]
             if picked_names:
-                lines.append(f"\nAlready chosen: {', '.join(picked_names)}")
+                header += f"\nAlready chosen: {', '.join(picked_names)}"
 
-        await ctx.send("\n".join(lines))
+        await self._send_with_reactions(
+            ctx,
+            header,
+            weapon_names,
+            display_options=display_labels,
+            expected_step="weapons",
+        )
 
     async def _step_weapons(self, ctx, session, char: Character, choice: str):
         weapon_choices = session.get("weapon_choices", [])
@@ -1001,19 +1169,22 @@ class CharacterCog(commands.Cog, name="Character"):
                 await self._finalize_spells(ctx, session, char)
             return
 
-        lines = [f"**Step 10: Spell Selection — Cantrips**"]
-        lines.append(f"Choose {needed} cantrips for your {char.char_class}.")
-        lines.append(f"Progress: {len(picked)}/{needed} chosen\n")
-
-        for i, spell in enumerate(available, 1):
-            lines.append(f"`{i:2d}.` {spell}")
-
-        lines.append(f"\nReply with: `!cc <number>`\nExample: `!cc 1`")
-
+        header = (
+            f"**Step 10: Spell Selection — Cantrips**\n"
+            f"Choose {needed} cantrips for your {char.char_class}.\n"
+            f"Progress: {len(picked)}/{needed} chosen"
+        )
         if picked:
-            lines.append(f"\nChosen so far: {', '.join(picked)}")
+            header += f"\nChosen so far: {', '.join(picked)}"
 
-        await ctx.send("\n".join(lines))
+        if len(available) <= 10:
+            await self._send_with_reactions(
+                ctx, header, available, expected_step="spells_cantrips",
+            )
+        else:
+            # Too many for emojis — fall back to numbered list
+            opt_list = _format_numbered_list(available)
+            await ctx.send(f"{header}\n\n{opt_list}\n\nReply with: `!cc <number>`")
 
     async def _step_spells_cantrips(self, ctx, session, char: Character, choice: str):
         picked = session["cantrips_picked"]
@@ -1059,19 +1230,22 @@ class CharacterCog(commands.Cog, name="Character"):
         else:
             type_desc = f"Choose {needed} 1st-level spells."
 
-        lines = [f"**Step 10: Spell Selection — 1st Level Spells**"]
-        lines.append(f"{type_desc}")
-        lines.append(f"Progress: {len(picked)}/{needed} chosen\n")
-
-        for i, spell in enumerate(available, 1):
-            lines.append(f"`{i:2d}.` {spell}")
-
-        lines.append(f"\nReply with: `!cc <number>`\nExample: `!cc 1`")
-
+        header = (
+            f"**Step 10: Spell Selection — 1st Level Spells**\n"
+            f"{type_desc}\n"
+            f"Progress: {len(picked)}/{needed} chosen"
+        )
         if picked:
-            lines.append(f"\nChosen so far: {', '.join(picked)}")
+            header += f"\nChosen so far: {', '.join(picked)}"
 
-        await ctx.send("\n".join(lines))
+        if len(available) <= 10:
+            await self._send_with_reactions(
+                ctx, header, available, expected_step="spells_level1",
+            )
+        else:
+            # Too many for emojis — fall back to numbered list
+            opt_list = _format_numbered_list(available)
+            await ctx.send(f"{header}\n\n{opt_list}\n\nReply with: `!cc <number>`")
 
     async def _step_spells_level1(self, ctx, session, char: Character, choice: str):
         picked = session["spells_picked"]
@@ -1162,12 +1336,16 @@ class CharacterCog(commands.Cog, name="Character"):
         _set_session(ctx.author.id, session)
 
         sheet = char.format_sheet()
-        if len(sheet) > 1800:
-            sheet = sheet[:1800] + "\n..."
+        if len(sheet) > 1600:
+            sheet = sheet[:1600] + "\n..."
 
-        await ctx.send(
-            f"**Character Preview:**\n{sheet}\n\n"
-            f"Confirm this character? Reply `!cc yes` to save or `!cc no` to start over."
+        await self._send_with_reactions(
+            ctx,
+            f"**Character Preview:**\n{sheet}\n\nConfirm this character?",
+            ["yes", "no"],
+            display_options=["Confirm — Save this character", "Start Over — Delete and redo"],
+            emojis=CONFIRM_EMOJIS,
+            expected_step="confirm",
         )
 
     async def _step_confirm(self, ctx, session, char: Character, choice: str):

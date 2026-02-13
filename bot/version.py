@@ -2,15 +2,22 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 __version_info__ = {
     'major': 1,
     'minor': 3,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.3.1** - February 13, 2026
+- Emoji reaction selection for character creation — click to choose instead of typing
+- Gender (♂️♀️⚧️), ability method (🎲📊🧮), confirm (✅❌) use themed emojis
+- Race, class, background, equipment, weapons, and spells use numbered reactions (1️⃣-🔟)
+- Falls back to text input for lists with more than 10 options
+- !cc text input still works at every step (backward compatible)
+
 **Version 1.3.0** - February 12, 2026
 - Multiple concurrent campaigns: each gets its own forum post, all independent
 - Campaign tracking moved to forum post thread ID as primary key
