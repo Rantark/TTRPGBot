@@ -2,15 +2,20 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.2"
+__version__ = "1.4.3"
 __version_info__ = {
     'major': 1,
     'minor': 4,
-    'patch': 2
+    'patch': 3
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.3** - February 15, 2026
+- New !cc restart — restart character creation from any step without deleting
+- Auto-reroll stat rolls if no score is 15+ (up to 10 rerolls)
+- Restart hint shown at the start of character creation
+
 **Version 1.4.2** - February 15, 2026
 - New !randompitch command — DM can let fate pick a random pitch
 - New !deletepitch command — pitch authors or DM can remove pitches by number

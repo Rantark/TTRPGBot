@@ -383,6 +383,7 @@ class CharacterCog(commands.Cog, name="Character"):
                 "**Character Creation**\n"
                 "Let's build your character step by step.\n"
                 f"{level_note}\n"
+                "*Tip: Type `!cc restart` at any point to start over.*\n\n"
                 "**Step 1: Name**\n"
                 "What is your character's name?\n"
                 "Reply with: `!cc <name>`\n"
@@ -413,6 +414,11 @@ class CharacterCog(commands.Cog, name="Character"):
         # If used in a guild channel, redirect to DMs
         if ctx.guild is not None:
             await ctx.send(f"{ctx.author.mention} Character creation happens in DMs! Check your DMs and use `!cc` there.")
+            return
+
+        # Handle restart at any step
+        if choice.strip().lower() == "restart":
+            await self._restart_creation(ctx, session)
             return
 
         step = session["step"]
@@ -454,6 +460,37 @@ class CharacterCog(commands.Cog, name="Character"):
             await self._step_confirm(ctx, session, char, choice)
         else:
             await ctx.send("Unknown creation step. Use `!deletechar` and start over with `!createchar`.")
+
+    async def _restart_creation(self, ctx, session):
+        """Restart character creation from step 1, preserving campaign link."""
+        channel_id = session.get("channel_id")
+        guild_id = session.get("guild_id")
+        starting_level = session.get("starting_level", 1)
+
+        # Create fresh character and session
+        char = Character(str(ctx.author.id), ctx.author.display_name)
+        new_session = {
+            "step": "name",
+            "char": char,
+            "channel_id": channel_id,
+            "guild_id": guild_id,
+            "starting_level": starting_level,
+        }
+        _set_session(ctx.author.id, new_session)
+
+        level_note = ""
+        if starting_level > 1:
+            level_note = f"\nThis campaign starts at **level {starting_level}**!\n"
+
+        await ctx.send(
+            "**Character Creation Restarted!**\n"
+            "Starting over from the beginning.\n"
+            f"{level_note}\n"
+            "**Step 1: Name**\n"
+            "What is your character's name?\n"
+            "Reply with: `!cc <name>`\n"
+            "Example: `!cc Thandril`"
+        )
 
     async def _step_name(self, ctx, session, char: Character, choice: str):
         if not choice.strip():
@@ -666,9 +703,16 @@ class CharacterCog(commands.Cog, name="Character"):
         choice = choice.strip()
 
         if choice in ("1", "roll"):
-            # Roll 4d6 drop lowest
-            results = roll_ability_scores()
-            scores = [r[0] for r in results]
+            # Roll 4d6 drop lowest — reroll if no score is 15+
+            MAX_REROLLS = 10
+            reroll_count = 0
+            while True:
+                results = roll_ability_scores()
+                scores = [r[0] for r in results]
+                if max(scores) >= 15 or reroll_count >= MAX_REROLLS:
+                    break
+                reroll_count += 1
+
             details = []
             for total, rolls in results:
                 dropped = min(rolls)
@@ -687,8 +731,10 @@ class CharacterCog(commands.Cog, name="Character"):
             _set_session(ctx.author.id, session)
 
             detail_str = "\n".join(f"  Roll {i+1}: {d}" for i, d in enumerate(details))
+            reroll_note = f"\n*Rerolled {reroll_count} time(s) — at least one score must be 15+*\n" if reroll_count > 0 else ""
             await ctx.send(
-                f"**Rolled Ability Scores:**\n{detail_str}\n\n"
+                f"**Rolled Ability Scores:**\n{detail_str}\n"
+                f"{reroll_note}\n"
                 f"Your scores: **{scores}**\n\n"
                 f"Assign them to abilities in order (STR DEX CON INT WIS CHA):\n"
                 f"Reply with: `!cc {' '.join(str(s) for s in scores)}`\n"
