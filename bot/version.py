@@ -2,18 +2,21 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.3"
+__version__ = "1.4.4"
 __version_info__ = {
     'major': 1,
     'minor': 4,
-    'patch': 3
+    'patch': 4
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.4** - February 15, 2026
+- Stat roll quality: requires at least one 15+ and no scores under 8
+
 **Version 1.4.3** - February 15, 2026
 - New !cc restart — restart character creation from any step without deleting
-- Auto-reroll stat rolls if no score is 15+ or any score is under 8 (up to 10 rerolls)
+- Auto-reroll stat rolls (up to 10 rerolls)
 - Restart hint shown at the start of character creation
 
 **Version 1.4.2** - February 15, 2026
