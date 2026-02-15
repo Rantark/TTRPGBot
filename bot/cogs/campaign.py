@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import random
 import re
 
 import discord
@@ -193,6 +194,66 @@ class CampaignCog(commands.Cog, name="Campaign"):
             "Phase: **Setup** — Players, create your characters with `!createchar`!\n"
             "When everyone is ready, the DM uses `!startcampaign` to begin the adventure."
         )
+
+    @commands.command(name="randompitch")
+    async def random_pitch(self, ctx: commands.Context):
+        """DM selects a random pitch to move to setup phase.
+
+        Usage: !randompitch
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign or campaign.phase != CampaignPhase.PITCHING:
+            await ctx.send("No campaign in pitching phase.")
+            return
+        if str(ctx.author.id) != campaign.dm_id:
+            await ctx.send("Only the DM can select a pitch.")
+            return
+        if not campaign.pitches:
+            await ctx.send("No pitches to choose from. Use `!pitch <title> | <description>` first.")
+            return
+
+        pitch = random.choice(campaign.pitches)
+        campaign.name = pitch["title"]
+        campaign.description = pitch["description"]
+        campaign.phase = CampaignPhase.SETUP
+        save_campaign(campaign)
+
+        await ctx.send(
+            f"**The fates have chosen: {pitch['title']}!**\n"
+            f"*{pitch['description']}*\n\n"
+            "Phase: **Setup** — Players, create your characters with `!createchar`!\n"
+            "When everyone is ready, the DM uses `!startcampaign` to begin the adventure."
+        )
+
+    @commands.command(name="deletepitch")
+    async def delete_pitch(self, ctx: commands.Context, number: int = 0):
+        """Delete a pitch by number. Authors can delete their own; DM can delete any.
+
+        Usage: !deletepitch 2
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign or campaign.phase != CampaignPhase.PITCHING:
+            await ctx.send("No campaign in pitching phase.")
+            return
+
+        if not campaign.pitches:
+            await ctx.send("No pitches to delete.")
+            return
+
+        if number < 1 or number > len(campaign.pitches):
+            await ctx.send(f"Invalid pitch number. Choose 1-{len(campaign.pitches)}.")
+            return
+
+        pitch = campaign.pitches[number - 1]
+        is_author = str(ctx.author.id) == pitch["author_id"]
+        is_dm = str(ctx.author.id) == campaign.dm_id
+        if not is_author and not is_dm:
+            await ctx.send("You can only delete your own pitches (or be the DM).")
+            return
+
+        campaign.pitches.pop(number - 1)
+        save_campaign(campaign)
+        await ctx.send(f"Pitch **#{number}: {pitch['title']}** has been deleted.")
 
     @commands.command(name="loot")
     async def loot(self, ctx: commands.Context, target: discord.Member, *, item_description: str):

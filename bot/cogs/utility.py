@@ -213,6 +213,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!pitches` — View all pitches\n"
                 "`!vote <#>` — Vote for a pitch\n"
                 "`!selectpitch <#>` — DM selects a pitch\n"
+                "`!randompitch` — *(DM)* Select a random pitch\n"
+                "`!deletepitch <#>` — Delete a pitch (author or DM)\n"
                 "`!setlevel <level>` — *(DM)* Set starting level for new characters\n"
                 "`!loot @player <item>` — *(DM)* Give item/gold to a player\n"
                 "`!giveall <item>` — *(DM)* Give item/gold to all players\n"
@@ -378,7 +380,7 @@ class UtilityCog(commands.Cog, name="Utility"):
 
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
-        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign",
+        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign", "randompitch": "campaign", "deletepitch": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",
