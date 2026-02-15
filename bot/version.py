@@ -2,15 +2,19 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 __version_info__ = {
     'major': 1,
     'minor': 4,
-    'patch': 1
+    'patch': 2
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.2** - February 15, 2026
+- New !randompitch command — DM can let fate pick a random pitch
+- New !deletepitch command — pitch authors or DM can remove pitches by number
+
 **Version 1.4.1** - Feubary 13 2026
 - Added a line in the initial prompt to protect children from being harmed in the campaign
 
