@@ -265,6 +265,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!talk <NPC>` — Speak to an NPC *(queued)*\n"
                 "`!pass` — Do nothing this round\n"
                 "`!afk` — Mark yourself AFK (auto-pass until you act)\n"
+                "`!remind` — Ping idle players to act (1hr cooldown)\n"
                 "`!undo` — Cancel your pending action before the round resolves\n"
                 "`!pending` — See who hasn't acted yet\n"
                 "`!resolve` — *(DM)* Force the round to resolve now\n"
@@ -382,7 +383,7 @@ class UtilityCog(commands.Cog, name="Utility"):
     CATEGORY_ALIASES = {
         "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign", "randompitch": "campaign", "deletepitch": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
-        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay",
+        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay", "remind": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",

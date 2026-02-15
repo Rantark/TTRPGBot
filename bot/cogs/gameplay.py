@@ -19,6 +19,8 @@ from bot.storage import load_campaign, save_campaign, list_campaigns
 from bot.utils.fuzzy_match import suggest_skill, suggest_ability
 
 AFK_TIMEOUT_MINUTES = 30
+ASYNC_REMINDER_HOURS = 24
+REMIND_COOLDOWN_SECONDS = 3600  # 1 hour
 
 
 class GameplayCog(commands.Cog, name="Gameplay"):
@@ -26,6 +28,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Per-channel cooldown for !remind: channel_id -> last use timestamp
+        self._remind_cooldowns: dict[str, float] = {}
         self._afk_checker_loop.start()
 
     def cog_unload(self):
@@ -184,9 +188,10 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
     @tasks.loop(minutes=5)
     async def _afk_checker_loop(self):
-        """Periodically check all LIVE-pace campaigns for AFK players."""
+        """Periodically check campaigns for AFK players and send async reminders."""
         try:
             await self._check_afk_rounds()
+            await self._check_async_reminders()
         except Exception:
             import logging
             logging.getLogger(__name__).exception("Error in AFK checker loop")
@@ -215,6 +220,47 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             elapsed = time.time() - campaign.last_action_time
             if elapsed >= AFK_TIMEOUT_MINUTES * 60:
                 await self._resolve_round_in_channel(channel_id, campaign)
+
+    async def _check_async_reminders(self):
+        """In ASYNC campaigns, ping idle players every 24 hours."""
+        now = time.time()
+        reminder_interval = ASYNC_REMINDER_HOURS * 3600
+
+        for channel_id in list_campaigns():
+            campaign = load_campaign(channel_id)
+            if not campaign:
+                continue
+            if campaign.phase != CampaignPhase.ACTIVE:
+                continue
+            if campaign.pace != CampaignPace.ASYNC:
+                continue
+            if campaign.combat.active:
+                continue
+            if not campaign.last_action_time:
+                continue
+
+            # Must have waiting players
+            waiting = campaign.get_waiting_player_ids()
+            if not waiting:
+                continue
+
+            # Check time since last action or last reminder (whichever is more recent)
+            last_event = max(campaign.last_action_time, campaign.last_reminder_time)
+            if now - last_event < reminder_interval:
+                continue
+
+            channel = self.bot.get_channel(int(channel_id))
+            if not channel:
+                continue
+
+            waiting_mentions = ", ".join(f"<@{pid}>" for pid in waiting)
+            await channel.send(
+                f"**Reminder** — The party is waiting on: {waiting_mentions}\n"
+                f"Submit your action (`!action`, `!ic`, `!pass`, etc.) to keep the adventure moving!"
+            )
+
+            campaign.last_reminder_time = now
+            save_campaign(campaign)
 
     async def _resolve_round_in_channel(self, channel_id: str, campaign):
         """Auto-resolve a stalled round by passing all idle players."""
@@ -496,6 +542,46 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
         if campaign.all_players_acted():
             await self._resolve_round(ctx, campaign)
+
+    @commands.command(name="remind")
+    async def remind_players(self, ctx: commands.Context):
+        """Ping idle players who haven't acted this round. Anyone can use this.
+
+        Has a 1-hour cooldown per channel to prevent spam.
+        Usage: !remind
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+
+        if campaign.combat.active:
+            await ctx.send("Combat is active — turns are handled by initiative order.")
+            return
+
+        waiting = campaign.get_waiting_player_ids()
+        if not waiting:
+            await ctx.send("Everyone has already acted this round!")
+            return
+
+        # Check cooldown
+        channel_id = str(ctx.channel.id)
+        now = time.time()
+        last_use = self._remind_cooldowns.get(channel_id, 0.0)
+        remaining = REMIND_COOLDOWN_SECONDS - (now - last_use)
+        if remaining > 0:
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            await ctx.send(f"Remind is on cooldown. Try again in **{mins}m {secs}s**.")
+            return
+
+        self._remind_cooldowns[channel_id] = now
+
+        waiting_mentions = ", ".join(f"<@{pid}>" for pid in waiting)
+        await ctx.send(
+            f"**Reminder** — The party is waiting on: {waiting_mentions}\n"
+            f"Submit your action (`!action`, `!ic`, `!pass`, etc.) to keep the adventure moving!"
+        )
 
     @commands.command(name="undo")
     async def undo_action(self, ctx: commands.Context):

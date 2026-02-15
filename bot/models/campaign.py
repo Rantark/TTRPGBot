@@ -190,6 +190,7 @@ class Campaign:
         # Campaign pace and AFK tracking
         self.pace = CampaignPace.ASYNC
         self.last_action_time: float = 0.0  # time.time() of last player action
+        self.last_reminder_time: float = 0.0  # time.time() of last 24h auto-reminder
 
     def get_character(self, player_id: str) -> Character | None:
         return self.characters.get(player_id)
@@ -284,6 +285,7 @@ class Campaign:
             "total_messages_processed": self.total_messages_processed,
             "pace": self.pace.value,
             "last_action_time": self.last_action_time,
+            "last_reminder_time": self.last_reminder_time,
         }
 
     @classmethod
@@ -317,4 +319,5 @@ class Campaign:
         except ValueError:
             c.pace = CampaignPace.ASYNC
         c.last_action_time = data.get("last_action_time", 0.0)
+        c.last_reminder_time = data.get("last_reminder_time", 0.0)
         return c

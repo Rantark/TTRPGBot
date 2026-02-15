@@ -2,15 +2,19 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.4"
+__version__ = "1.4.5"
 __version_info__ = {
     'major': 1,
     'minor': 4,
-    'patch': 4
+    'patch': 5
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.5** - February 15, 2026
+- New !remind command — anyone can ping idle players (1-hour cooldown per channel)
+- Auto-reminder in ASYNC campaigns: bot pings idle players every 24 hours automatically
+
 **Version 1.4.4** - February 15, 2026
 - Stat roll quality: requires at least one 15+ and no scores under 8
 
