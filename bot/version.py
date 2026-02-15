@@ -13,7 +13,7 @@ __version_info__ = {
 RELEASE_NOTES = """
 **Version 1.4.3** - February 15, 2026
 - New !cc restart — restart character creation from any step without deleting
-- Auto-reroll stat rolls if no score is 15+ (up to 10 rerolls)
+- Auto-reroll stat rolls if no score is 15+ or any score is under 8 (up to 10 rerolls)
 - Restart hint shown at the start of character creation
 
 **Version 1.4.2** - February 15, 2026

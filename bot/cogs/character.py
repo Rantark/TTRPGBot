@@ -703,13 +703,15 @@ class CharacterCog(commands.Cog, name="Character"):
         choice = choice.strip()
 
         if choice in ("1", "roll"):
-            # Roll 4d6 drop lowest — reroll if no score is 15+
+            # Roll 4d6 drop lowest — reroll if no score is 15+ or any score is under 8
             MAX_REROLLS = 10
             reroll_count = 0
             while True:
                 results = roll_ability_scores()
                 scores = [r[0] for r in results]
-                if max(scores) >= 15 or reroll_count >= MAX_REROLLS:
+                if max(scores) >= 15 and min(scores) >= 8:
+                    break
+                if reroll_count >= MAX_REROLLS:
                     break
                 reroll_count += 1
 
@@ -731,7 +733,7 @@ class CharacterCog(commands.Cog, name="Character"):
             _set_session(ctx.author.id, session)
 
             detail_str = "\n".join(f"  Roll {i+1}: {d}" for i, d in enumerate(details))
-            reroll_note = f"\n*Rerolled {reroll_count} time(s) — at least one score must be 15+*\n" if reroll_count > 0 else ""
+            reroll_note = f"\n*Rerolled {reroll_count} time(s) — requires at least one 15+ and no scores under 8*\n" if reroll_count > 0 else ""
             await ctx.send(
                 f"**Rolled Ability Scores:**\n{detail_str}\n"
                 f"{reroll_note}\n"
