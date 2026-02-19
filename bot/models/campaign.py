@@ -184,6 +184,7 @@ class Campaign:
         # RP scene coordination: queue actions until all players act or pass
         self.pending_actions: dict[str, str] = {}  # player_id -> action text
         self.passed_players: list[str] = []  # player_ids who passed this round
+        self.held_players: list[str] = []  # player_ids holding their action this round
         # History summarization — rolling summary of trimmed messages
         self.story_summary: str = ""
         self.total_messages_processed: int = 0
@@ -243,19 +244,23 @@ class Campaign:
         return [pid for pid, c in self.characters.items() if c.creation_complete]
 
     def all_players_acted(self) -> bool:
-        """Check if every active player has submitted an action or passed."""
+        """Check if every active player has submitted an action, passed, or held."""
         active = set(self.get_active_player_ids())
-        acted = set(self.pending_actions.keys()) | set(self.passed_players)
+        acted = set(self.pending_actions.keys()) | set(self.passed_players) | set(self.held_players)
         return active.issubset(acted)
 
     def get_waiting_player_ids(self) -> list[str]:
-        """Return player IDs who haven't acted or passed yet."""
+        """Return player IDs who haven't acted, passed, or held yet."""
         active = set(self.get_active_player_ids())
-        acted = set(self.pending_actions.keys()) | set(self.passed_players)
+        acted = set(self.pending_actions.keys()) | set(self.passed_players) | set(self.held_players)
         return [pid for pid in active if pid not in acted]
 
     def clear_pending(self):
-        """Clear all pending actions and passes for the next round."""
+        """Clear all pending actions and passes for the next round.
+
+        Note: held_players is NOT cleared here — it persists until the
+        held action follow-up resolves.
+        """
         self.pending_actions = {}
         self.passed_players = []
 
@@ -281,6 +286,7 @@ class Campaign:
             "setup_channel_id": self.setup_channel_id,
             "pending_actions": self.pending_actions,
             "passed_players": self.passed_players,
+            "held_players": self.held_players,
             "story_summary": self.story_summary,
             "total_messages_processed": self.total_messages_processed,
             "pace": self.pace.value,
@@ -312,6 +318,7 @@ class Campaign:
         c.setup_channel_id = data.get("setup_channel_id", data.get("channel_id"))
         c.pending_actions = data.get("pending_actions", {})
         c.passed_players = data.get("passed_players", [])
+        c.held_players = data.get("held_players", [])
         c.story_summary = data.get("story_summary", "")
         c.total_messages_processed = data.get("total_messages_processed", 0)
         try:

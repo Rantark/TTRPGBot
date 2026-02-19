@@ -56,6 +56,20 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             await self._dm_respond_immediate(ctx, campaign, action_text)
             return
 
+        # If this player was holding, their action is a solo follow-up
+        if player_id in campaign.held_players:
+            campaign.held_players.remove(player_id)
+            save_campaign(campaign)
+            await ctx.send(f"**{char_name}** acts on their held action!")
+            await self._dm_respond_immediate(ctx, campaign, action_text)
+            save_campaign(campaign)
+            # If more held players remain, prompt the next one
+            if campaign.held_players:
+                await self._prompt_next_held(ctx, campaign)
+            else:
+                await ctx.send("*A new round begins.* Submit your actions!")
+            return
+
         # Queue the action
         campaign.pending_actions[player_id] = action_text
         campaign.last_action_time = time.time()
@@ -122,7 +136,12 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         save_campaign(campaign)
 
         await self._send_long(ctx, clean_response)
-        await ctx.send("*A new round begins.* Submit your actions!")
+
+        # If anyone held their action, prompt them before starting a new round
+        if campaign.held_players:
+            await self._prompt_next_held(ctx, campaign)
+        else:
+            await ctx.send("*A new round begins.* Submit your actions!")
 
     async def _dm_respond_immediate(self, ctx, campaign, action_text: str):
         """Send action directly to Claude (used during combat or for !ask)."""
@@ -181,6 +200,25 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             text = text[split_at:].lstrip("\n")
         if text:
             await ctx.send(text)
+
+    # ------------------------------------------------------------------
+    # Held action helpers
+    # ------------------------------------------------------------------
+
+    async def _prompt_next_held(self, ctx, campaign):
+        """Prompt the next held player to submit their follow-up action."""
+        if not campaign.held_players:
+            await ctx.send("*A new round begins.* Submit your actions!")
+            return
+
+        next_pid = campaign.held_players[0]
+        char = campaign.get_character(next_pid)
+        char_name = char.name if char else f"<@{next_pid}>"
+        await ctx.send(
+            f"**{char_name}** (<@{next_pid}>), the scene has played out. "
+            f"What do you do with your held action?\n"
+            f"Use `!action`, `!ic`, `!emote`, etc. to respond, or `!pass` to do nothing."
+        )
 
     # ------------------------------------------------------------------
     # AFK timeout checker (LIVE pace only)
@@ -310,6 +348,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         party_summary = campaign.get_party_summary()
 
         campaign.clear_pending()
+        campaign.held_players = []  # AFK timeout clears held actions too
         save_campaign(campaign)
 
         raw_response = await self.bot.dm_engine.get_dm_response(
@@ -499,6 +538,18 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                 await combat_cog.pass_turn(ctx)
             return
 
+        # If player is holding, passing means they forfeit their held action
+        if player_id in campaign.held_players:
+            campaign.held_players.remove(player_id)
+            save_campaign(campaign)
+            await ctx.send(f"**{char_name}** lets their held action pass.")
+            # If more held players remain, prompt the next one
+            if campaign.held_players:
+                await self._prompt_next_held(ctx, campaign)
+            else:
+                await ctx.send("*A new round begins.* Submit your actions!")
+            return
+
         # RP pass
         if player_id not in campaign.passed_players:
             campaign.passed_players.append(player_id)
@@ -539,6 +590,70 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             f"**{char_name}** is AFK. They will auto-pass until they submit an action.\n"
             f"Use any gameplay command (`!action`, `!ic`, etc.) to return."
         )
+
+        if campaign.all_players_acted():
+            await self._resolve_round(ctx, campaign)
+
+    @commands.command(name="hold")
+    async def hold_action(self, ctx: commands.Context):
+        """Hold your action — wait to see what happens before acting.
+
+        **In RP:** The round resolves for everyone else first. Then the DM
+        describes the scene and you get to act solo based on what happened.
+
+        **In combat:** Tells the DM you're holding your action (standard D&D
+        held action rules — declare a trigger and the DM handles it).
+
+        Usage: !hold
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+
+        player_id = str(ctx.author.id)
+        char = campaign.get_character(player_id)
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+        char_name = char.name
+
+        # Combat: send as immediate action for the DM to handle
+        if campaign.combat.active:
+            await self._dm_respond_immediate(
+                ctx, campaign,
+                f"[HELD ACTION] {char_name} holds their action, waiting for the right moment. "
+                f"Apply standard D&D 5e Ready Action rules — ask the player for their trigger "
+                f"and held action if they haven't specified.",
+            )
+            return
+
+        # RP: already acted or passed this round?
+        if player_id in campaign.pending_actions:
+            await ctx.send(f"**{char_name}** already submitted an action. Use `!undo` first to change it.")
+            return
+        if player_id in campaign.passed_players:
+            await ctx.send(f"**{char_name}** already passed. Use `!undo` first to change it.")
+            return
+        if player_id in campaign.held_players:
+            await ctx.send(f"**{char_name}** is already holding.")
+            return
+
+        campaign.held_players.append(player_id)
+        campaign.last_action_time = time.time()
+        save_campaign(campaign)
+
+        waiting = campaign.get_waiting_player_ids()
+        if waiting:
+            waiting_mentions = ", ".join(f"<@{pid}>" for pid in waiting)
+            await ctx.send(
+                f"**{char_name}** holds their action — they'll act after the scene resolves.\n"
+                f"Waiting on: {waiting_mentions}"
+            )
+        else:
+            await ctx.send(
+                f"**{char_name}** holds their action — they'll act after the scene resolves."
+            )
 
         if campaign.all_players_acted():
             await self._resolve_round(ctx, campaign)
@@ -618,6 +733,16 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             save_campaign(campaign)
             await ctx.send(
                 "Your pass has been cancelled.\n"
+                "You can now submit an action with `!action`, `!ic`, `!emote`, or `!pass`."
+            )
+            return
+
+        # Check held players (only before the round resolves, not during follow-up)
+        if player_id in campaign.held_players:
+            campaign.held_players.remove(player_id)
+            save_campaign(campaign)
+            await ctx.send(
+                "Your hold has been cancelled.\n"
                 "You can now submit an action with `!action`, `!ic`, `!emote`, or `!pass`."
             )
             return

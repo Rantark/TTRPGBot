@@ -2,15 +2,21 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.5"
+__version__ = "1.4.6"
 __version_info__ = {
     'major': 1,
     'minor': 4,
-    'patch': 5
+    'patch': 6
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.4.6** - February 19, 2026
+- New !hold command — hold your action to act after others resolve
+- RP held actions: round resolves for everyone else, then held players act solo in sequence
+- Combat held actions: sends to DM using standard D&D 5e Ready Action rules
+- !undo and !pass work with held actions
+
 **Version 1.4.5** - February 15, 2026
 - New !remind command — anyone can ping idle players (1-hour cooldown per channel)
 - Auto-reminder in ASYNC campaigns: bot pings idle players every 24 hours automatically
