@@ -2,15 +2,19 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.5.1"
+__version__ = "1.5.2"
 __version_info__ = {
     'major': 1,
     'minor': 5,
-    'patch': 1
+    'patch': 2
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.5.2** - February 20, 2026
+- Removed auto-delete timer from status messages — cleanup is now manual only via !cleanup
+- Status messages persist until manually cleaned up
+
 **Version 1.5.1** - February 20, 2026
 - New !cleanup command — manually delete bot status clutter from chat on demand
 - Scans recent messages, removes transient status messages, keeps narrative and player content
@@ -18,8 +22,6 @@ RELEASE_NOTES = """
 
 **Version 1.5.0** - February 20, 2026
 - New !rollresults command (alias !rr) — report dice rolls to the DM for immediate reaction
-- Chat cleanup: bot status messages (locked in, waiting on, passes, etc.) auto-delete after 5 minutes
-- Narrative from Claude and player actions/rolls stay permanent in chat
 
 **Version 1.4.6** - February 19, 2026
 - New !hold command — hold your action to act after others resolve

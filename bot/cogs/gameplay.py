@@ -21,7 +21,6 @@ from bot.utils.fuzzy_match import suggest_skill, suggest_ability
 AFK_TIMEOUT_MINUTES = 30
 ASYNC_REMINDER_HOURS = 24
 REMIND_COOLDOWN_SECONDS = 3600  # 1 hour
-STATUS_DELETE_AFTER = 300  # 5 minutes — auto-delete bot status messages
 
 
 class GameplayCog(commands.Cog, name="Gameplay"):
@@ -204,12 +203,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             await ctx.send(text)
 
     async def _send_status(self, ctx, text: str):
-        """Send a status message that auto-deletes after 5 minutes.
-
-        Used for 'locked in', 'waiting on', 'passes', etc. — transient info
-        that clutters the chat. Narrative and player actions stay permanent.
-        """
-        await ctx.send(text, delete_after=STATUS_DELETE_AFTER)
+        """Send a status message. Use !cleanup to remove these manually."""
+        await ctx.send(text)
 
     async def _try_delete_command(self, ctx):
         """Try to delete the user's command message to reduce clutter."""
