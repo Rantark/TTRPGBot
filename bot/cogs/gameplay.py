@@ -21,6 +21,7 @@ from bot.utils.fuzzy_match import suggest_skill, suggest_ability
 AFK_TIMEOUT_MINUTES = 30
 ASYNC_REMINDER_HOURS = 24
 REMIND_COOLDOWN_SECONDS = 3600  # 1 hour
+STATUS_DELETE_AFTER = 300  # 5 minutes — auto-delete bot status messages
 
 
 class GameplayCog(commands.Cog, name="Gameplay"):
@@ -60,14 +61,14 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if player_id in campaign.held_players:
             campaign.held_players.remove(player_id)
             save_campaign(campaign)
-            await ctx.send(f"**{char_name}** acts on their held action!")
+            await self._send_status(ctx, f"**{char_name}** acts on their held action!")
             await self._dm_respond_immediate(ctx, campaign, action_text)
             save_campaign(campaign)
             # If more held players remain, prompt the next one
             if campaign.held_players:
                 await self._prompt_next_held(ctx, campaign)
             else:
-                await ctx.send("*A new round begins.* Submit your actions!")
+                await self._send_status(ctx, "*A new round begins.* Submit your actions!")
             return
 
         # Queue the action
@@ -75,11 +76,12 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         campaign.last_action_time = time.time()
         save_campaign(campaign)
 
-        # Tell the channel this player has acted
+        # Tell the channel this player has acted (status — auto-deletes)
         waiting = campaign.get_waiting_player_ids()
         if waiting:
             waiting_mentions = ", ".join(f"<@{pid}>" for pid in waiting)
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 f"**{char_name}**'s action is locked in.\n"
                 f"Waiting on: {waiting_mentions}\n"
                 f"Use `!action`, `!ic`, `!emote`, `!look`, `!inspect`, `!talk`, or `!pass` to continue."
@@ -94,7 +96,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             # Everyone passed, nothing to send
             campaign.clear_pending()
             save_campaign(campaign)
-            await ctx.send("*Everyone passes. The scene continues...*\nSubmit actions when ready.")
+            await self._send_status(ctx, "*Everyone passes. The scene continues...*\nSubmit actions when ready.")
             return
 
         # Build a combined action message for Claude
@@ -141,7 +143,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if campaign.held_players:
             await self._prompt_next_held(ctx, campaign)
         else:
-            await ctx.send("*A new round begins.* Submit your actions!")
+            await self._send_status(ctx, "*A new round begins.* Submit your actions!")
 
     async def _dm_respond_immediate(self, ctx, campaign, action_text: str):
         """Send action directly to Claude (used during combat or for !ask)."""
@@ -201,6 +203,21 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if text:
             await ctx.send(text)
 
+    async def _send_status(self, ctx, text: str):
+        """Send a status message that auto-deletes after 5 minutes.
+
+        Used for 'locked in', 'waiting on', 'passes', etc. — transient info
+        that clutters the chat. Narrative and player actions stay permanent.
+        """
+        await ctx.send(text, delete_after=STATUS_DELETE_AFTER)
+
+    async def _try_delete_command(self, ctx):
+        """Try to delete the user's command message to reduce clutter."""
+        try:
+            await ctx.message.delete()
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+
     # ------------------------------------------------------------------
     # Held action helpers
     # ------------------------------------------------------------------
@@ -208,13 +225,14 @@ class GameplayCog(commands.Cog, name="Gameplay"):
     async def _prompt_next_held(self, ctx, campaign):
         """Prompt the next held player to submit their follow-up action."""
         if not campaign.held_players:
-            await ctx.send("*A new round begins.* Submit your actions!")
+            await self._send_status(ctx, "*A new round begins.* Submit your actions!")
             return
 
         next_pid = campaign.held_players[0]
         char = campaign.get_character(next_pid)
         char_name = char.name if char else f"<@{next_pid}>"
-        await ctx.send(
+        await self._send_status(
+            ctx,
             f"**{char_name}** (<@{next_pid}>), the scene has played out. "
             f"What do you do with your held action?\n"
             f"Use `!action`, `!ic`, `!emote`, etc. to respond, or `!pass` to do nothing."
@@ -542,12 +560,12 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if player_id in campaign.held_players:
             campaign.held_players.remove(player_id)
             save_campaign(campaign)
-            await ctx.send(f"**{char_name}** lets their held action pass.")
+            await self._send_status(ctx, f"**{char_name}** lets their held action pass.")
             # If more held players remain, prompt the next one
             if campaign.held_players:
                 await self._prompt_next_held(ctx, campaign)
             else:
-                await ctx.send("*A new round begins.* Submit your actions!")
+                await self._send_status(ctx, "*A new round begins.* Submit your actions!")
             return
 
         # RP pass
@@ -558,7 +576,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         waiting = campaign.get_waiting_player_ids()
         if waiting:
             waiting_mentions = ", ".join(f"<@{pid}>" for pid in waiting)
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 f"**{char_name}** passes (does nothing this round).\n"
                 f"Waiting on: {waiting_mentions}"
             )
@@ -586,7 +605,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
             campaign.passed_players.append(player_id)
             save_campaign(campaign)
 
-        await ctx.send(
+        await self._send_status(
+            ctx,
             f"**{char_name}** is AFK. They will auto-pass until they submit an action.\n"
             f"Use any gameplay command (`!action`, `!ic`, etc.) to return."
         )
@@ -646,12 +666,14 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         waiting = campaign.get_waiting_player_ids()
         if waiting:
             waiting_mentions = ", ".join(f"<@{pid}>" for pid in waiting)
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 f"**{char_name}** holds their action — they'll act after the scene resolves.\n"
                 f"Waiting on: {waiting_mentions}"
             )
         else:
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 f"**{char_name}** holds their action — they'll act after the scene resolves."
             )
 
@@ -721,7 +743,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if player_id in campaign.pending_actions:
             del campaign.pending_actions[player_id]
             save_campaign(campaign)
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 "Your action has been cancelled.\n"
                 "You can now submit a new action with `!action`, `!ic`, `!emote`, or `!pass`."
             )
@@ -731,7 +754,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if player_id in campaign.passed_players:
             campaign.passed_players.remove(player_id)
             save_campaign(campaign)
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 "Your pass has been cancelled.\n"
                 "You can now submit an action with `!action`, `!ic`, `!emote`, or `!pass`."
             )
@@ -741,13 +765,14 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         if player_id in campaign.held_players:
             campaign.held_players.remove(player_id)
             save_campaign(campaign)
-            await ctx.send(
+            await self._send_status(
+                ctx,
                 "Your hold has been cancelled.\n"
                 "You can now submit an action with `!action`, `!ic`, `!emote`, or `!pass`."
             )
             return
 
-        await ctx.send("You don't have a pending action to undo.")
+        await self._send_status(ctx, "You don't have a pending action to undo.")
 
     @commands.command(name="rewind")
     async def rewind_scene(self, ctx: commands.Context, *, new_prompt: str = ""):
@@ -854,7 +879,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         else:
             lines.append(f"\nWaiting on {len(waiting)} player(s). DM can use `!resolve` to force it.")
 
-        await ctx.send("\n".join(lines))
+        await self._send_status(ctx, "\n".join(lines))
 
     # ------------------------------------------------------------------
     # DM-initiated commands
@@ -922,6 +947,60 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         Usage: !ooc brb getting snacks
         """
         await ctx.send(f"**[OOC] {ctx.author.display_name}:** {message}")
+
+    @commands.command(name="rollresults", aliases=["rr"])
+    async def roll_results(self, ctx: commands.Context, *, args: str = ""):
+        """Report a dice roll result to the DM so Claude can react to it.
+
+        This is separate from RP actions — use it when the DM asks you to
+        roll a check, save, initiative, or any other roll. Claude sees the
+        roll immediately and responds.
+
+        Usage: !rollresults Perception check 14
+        Usage: !rollresults Initiative 18
+        Usage: !rollresults Dexterity saving throw 7
+        Usage: !rr Stealth check nat 20 (total 24)
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+
+        if not args.strip():
+            await self._send_status(ctx,
+                "**Usage:** `!rollresults <reason> <result>`\n"
+                "Example: `!rollresults Perception check 14`\n"
+                "Example: `!rollresults Initiative 18`\n"
+                "Alias: `!rr`"
+            )
+            return
+
+        player_id = str(ctx.author.id)
+        char = campaign.get_character(player_id)
+        char_name = char.name if char else ctx.author.display_name
+        char_summary = char.short_summary() if char else ""
+
+        # Format the roll report for Claude
+        roll_report = (
+            f"[DICE ROLL RESULT] {char_name} rolled: {args.strip()}\n"
+            f"React to this roll result appropriately. If it was a check or save, "
+            f"describe whether it succeeds or fails based on the DC. If it was initiative, "
+            f"note it for combat order. If it was an attack or damage roll, apply the result."
+        )
+
+        # Send as permanent message so the roll is visible in chat
+        await ctx.send(f"**{char_name}** rolls: {args.strip()}")
+
+        # Send to Claude immediately (not queued)
+        async with ctx.typing():
+            raw_response = await self.bot.dm_engine.get_dm_response(
+                campaign, roll_report, ctx.author.display_name, char_summary,
+            )
+
+        campaign.add_session_log(f"Roll: {char_name} — {args.strip()[:80]}")
+        clean_response = await self._process_dm_response(ctx, campaign, raw_response)
+        save_campaign(campaign)
+        await self._send_long(ctx, clean_response)
 
     @commands.command(name="ask")
     async def ask_dm(self, ctx: commands.Context, *, question: str):

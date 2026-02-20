@@ -2,15 +2,20 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.4.6"
+__version__ = "1.5.0"
 __version_info__ = {
     'major': 1,
-    'minor': 4,
-    'patch': 6
+    'minor': 5,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.5.0** - February 20, 2026
+- New !rollresults command (alias !rr) — report dice rolls to the DM for immediate reaction
+- Chat cleanup: bot status messages (locked in, waiting on, passes, etc.) auto-delete after 5 minutes
+- Narrative from Claude and player actions/rolls stay permanent in chat
+
 **Version 1.4.6** - February 19, 2026
 - New !hold command — hold your action to act after others resolve
 - RP held actions: round resolves for everyone else, then held players act solo in sequence
