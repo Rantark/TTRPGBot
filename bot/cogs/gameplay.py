@@ -940,6 +940,77 @@ class GameplayCog(commands.Cog, name="Gameplay"):
     # Non-queued commands (these don't advance story / are immediate)
     # ------------------------------------------------------------------
 
+    @commands.command(name="cleanup")
+    async def cleanup_chat(self, ctx: commands.Context, limit: int = 100):
+        """Delete bot status/clutter messages from chat, keeping narrative and player content.
+
+        Scans recent messages and removes transient bot messages like
+        "locked in", "waiting on", round status, reminders, etc.
+        Claude's narrative and player actions/rolls stay.
+
+        Usage: !cleanup
+        Usage: !cleanup 200  (scan last 200 messages instead of 100)
+        """
+        limit = max(10, min(limit, 500))
+
+        # Patterns that identify transient status messages to delete
+        status_patterns = [
+            "locked in",
+            "Waiting on:",
+            "A new round begins",
+            "auto-passed",
+            "AFK Timeout",
+            "Everyone passes",
+            "passes (does nothing",
+            "Round Status:",
+            "Reminder —",
+            "acts on their held action",
+            "holds their action",
+            "lets their held action pass",
+            "is AFK",
+            "has been cancelled",
+            "don't have a pending action",
+            "Remind is on cooldown",
+            "Command help sent to your DMs",
+            "No active campaign",
+            "Submit your action",
+            "the scene has played out",
+            "Submit actions when ready",
+        ]
+
+        def is_clutter(msg: discord.Message) -> bool:
+            # Only delete the bot's own messages
+            if msg.author != self.bot.user:
+                return False
+            # Don't delete the cleanup command response itself
+            if msg == status_msg:
+                return False
+            content = msg.content
+            for pattern in status_patterns:
+                if pattern in content:
+                    return True
+            return False
+
+        status_msg = await ctx.send("Cleaning up chat...")
+
+        try:
+            deleted = await ctx.channel.purge(limit=limit, check=is_clutter)
+            count = len(deleted)
+            await status_msg.edit(
+                content=f"Cleaned up **{count}** status message{'s' if count != 1 else ''}.",
+                delete_after=10,
+            )
+        except discord.Forbidden:
+            await status_msg.edit(
+                content="I need **Manage Messages** permission to clean up chat.",
+                delete_after=10,
+            )
+        except discord.HTTPException:
+            await status_msg.edit(
+                content="Something went wrong during cleanup.",
+                delete_after=10,
+            )
+
     @commands.command(name="ooc")
     async def out_of_character(self, ctx: commands.Context, *, message: str):
         """Out-of-character chat. Does NOT count as an action.
