@@ -13,7 +13,7 @@ from discord.ext import commands, tasks
 
 from bot.models.campaign import CampaignPhase, CampaignPace
 from bot.data.rules import ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS, modifier_str
-from bot.dice import parse_and_roll, roll_check, parse_adv_dis
+from bot.dice import parse_and_roll, roll_check, roll_initiative, parse_adv_dis
 from bot.dm_engine import parse_action_tags, extract_whispers
 from bot.storage import load_campaign, save_campaign, list_campaigns
 from bot.utils.fuzzy_match import suggest_skill, suggest_ability
@@ -1013,6 +1013,55 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         Usage: !ooc brb getting snacks
         """
         await ctx.send(f"**[OOC] {ctx.author.display_name}:** {message}")
+
+    @commands.command(name="introll")
+    async def initiative_roll(self, ctx: commands.Context, *, args: str = ""):
+        """Roll initiative and report it to the DM immediately (not queued).
+
+        Use this during RP when combat is about to start. Claude sees
+        the initiative roll right away and can set up the encounter.
+
+        Usage: !introll
+        Usage: !introll adv
+        Usage: !introll dis
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign):
+            await ctx.send("No active campaign.")
+            return
+
+        player_id = str(ctx.author.id)
+        char = campaign.get_character(player_id)
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        _, advantage, disadvantage = parse_adv_dis(args) if args else ("", False, False)
+
+        dex_mod = char.get_modifier("DEX")
+        result = roll_initiative(dex_mod, advantage=advantage, disadvantage=disadvantage)
+        char_name = char.name
+        char_summary = char.short_summary()
+
+        # Show the roll in chat (permanent)
+        await ctx.send(f"**{char_name}** rolls initiative: {result['breakdown']}")
+
+        # Send to Claude immediately so the DM knows initiative was rolled
+        roll_report = (
+            f"[INITIATIVE ROLL] {char_name} rolled initiative: {result['total']} "
+            f"(d20{'+' + str(dex_mod) if dex_mod >= 0 else dex_mod}). "
+            f"This player is rolling for combat initiative. Note their result for turn order."
+        )
+
+        async with ctx.typing():
+            raw_response = await self.bot.dm_engine.get_dm_response(
+                campaign, roll_report, ctx.author.display_name, char_summary,
+            )
+
+        campaign.add_session_log(f"Initiative: {char_name} — {result['total']}")
+        clean_response = await self._process_dm_response(ctx, campaign, raw_response)
+        save_campaign(campaign)
+        await self._send_long(ctx, clean_response)
 
     @commands.command(name="rollresults", aliases=["rr"])
     async def roll_results(self, ctx: commands.Context, *, args: str = ""):

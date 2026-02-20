@@ -274,6 +274,7 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!rewind <prompt>` — *(DM)* Undo and replace with new scene\n"
                 "`!dm <prompt>` — *(DM)* Narrate a scene or event\n"
                 "`!dm-whisper @player <msg>` — *(DM)* Private message to a player\n"
+                "`!introll [adv|dis]` — Roll initiative and report to DM immediately *(not queued)*\n"
                 "`!rollresults <reason> <result>` — Report a roll to the DM (`!rr` alias)\n"
                 "`!cleanup [limit]` — Delete bot status clutter, keep narrative & player messages\n"
                 "`!ask <question>` — Ask the DM a rules question *(no story impact)*\n"
@@ -386,7 +387,7 @@ class UtilityCog(commands.Cog, name="Utility"):
     CATEGORY_ALIASES = {
         "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign", "randompitch": "campaign", "deletepitch": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
-        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay", "remind": "gameplay", "hold": "gameplay", "rollresults": "gameplay", "rr": "gameplay", "cleanup": "gameplay",
+        "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay", "remind": "gameplay", "hold": "gameplay", "introll": "gameplay", "rollresults": "gameplay", "rr": "gameplay", "cleanup": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",
         "fight": "combat", "initiative": "combat", "battle": "combat", "map": "combat",
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",

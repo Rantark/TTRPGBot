@@ -2,15 +2,19 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 __version_info__ = {
     'major': 1,
     'minor': 5,
-    'patch': 2
+    'patch': 3
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.5.3** - February 20, 2026
+- New !introll command — roll initiative during RP and report it to Claude immediately
+- Uses d20 + DEX mod, supports adv/dis, not queued so Claude sees it right away
+
 **Version 1.5.2** - February 20, 2026
 - Removed auto-delete timer from status messages — cleanup is now manual only via !cleanup
 - Status messages persist until manually cleaned up
