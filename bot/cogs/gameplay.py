@@ -166,8 +166,8 @@ class GameplayCog(commands.Cog, name="Gameplay"):
 
     async def _process_dm_response(self, ctx, campaign, raw_response: str) -> str:
         """Parse action tags, execute game state changes, send whispers, return clean text."""
-        # Parse and execute action tags (DAMAGE, CONDITION, NPC_DEFEAT, SPELL_SLOT)
-        clean_text, log_entries = parse_action_tags(raw_response, campaign)
+        # Parse and execute action tags (DAMAGE, CONDITION, NPC_DEFEAT, SPELL_SLOT, combat)
+        clean_text, log_entries, combat_events = parse_action_tags(raw_response, campaign)
 
         # Extract and send whispers
         clean_text, whispers = extract_whispers(clean_text)
@@ -185,11 +185,99 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         for entry in log_entries:
             campaign.add_session_log(entry)
 
+        # Handle combat events from Claude's tags
+        if combat_events:
+            await self._handle_combat_events(ctx, campaign, combat_events)
+
         # Save if anything changed
-        if log_entries or whispers:
+        if log_entries or whispers or combat_events:
             save_campaign(campaign)
 
         return clean_text
+
+    async def _handle_combat_events(self, ctx, campaign, combat_events: list[str]):
+        """Process combat control tags from Claude's response."""
+        from bot.models.campaign import CombatMap
+
+        for event in combat_events:
+            if event == "COMBAT_START":
+                if not campaign.combat.active:
+                    campaign.combat.active = True
+                    campaign.combat.initiative_order = []
+                    campaign.combat.current_turn_index = 0
+                    campaign.combat.round_number = 1
+                    campaign.combat.combat_map = CombatMap()
+                    save_campaign(campaign)
+                    await ctx.send(
+                        "**COMBAT STARTED!**\n"
+                        "All players: Roll initiative with `!initiative`\n"
+                        "Once everyone has rolled, DM uses `!begincombat` to set the order and start turns."
+                    )
+
+            elif event == "COMBAT_END":
+                if campaign.combat.active:
+                    rounds = campaign.combat.round_number
+                    campaign.combat.active = False
+                    campaign.combat.initiative_order = []
+                    campaign.combat.current_turn_index = 0
+                    campaign.combat.round_number = 1
+                    save_campaign(campaign)
+                    await ctx.send(
+                        f"**Combat has ended** after {rounds} round(s).\n"
+                        f"Resume roleplay freely!"
+                    )
+
+            elif event == "NEXT_TURN":
+                if campaign.combat.active and campaign.combat.initiative_order:
+                    campaign.combat.advance_turn()
+                    save_campaign(campaign)
+                    current = campaign.combat.current_turn
+                    if current:
+                        if current.get("player_id"):
+                            await ctx.send(
+                                f"<@{current['player_id']}>, it's **{current['name']}**'s turn! "
+                                f"What do you do?"
+                            )
+                        else:
+                            # NPC turn — tell Claude to narrate it
+                            await self._auto_npc_turn(ctx, campaign, current["name"])
+
+            elif event.startswith("ADD_NPC:"):
+                parts = event.split(":", 2)
+                if len(parts) == 3:
+                    npc_name = parts[1]
+                    try:
+                        init_roll = int(parts[2])
+                    except ValueError:
+                        continue
+                    # Don't add duplicates
+                    existing = [e["name"].lower() for e in campaign.combat.initiative_order]
+                    if npc_name.lower() not in existing:
+                        campaign.combat.initiative_order.append({
+                            "name": npc_name,
+                            "roll": init_roll,
+                            "player_id": None,
+                        })
+
+    async def _auto_npc_turn(self, ctx, campaign, npc_name: str):
+        """When it's an NPC's turn, ask Claude to narrate their action."""
+        party_summary = campaign.get_party_summary()
+
+        async with ctx.typing():
+            raw_response = await self.bot.dm_engine.get_dm_response(
+                campaign,
+                f"[NPC TURN] It is {npc_name}'s turn in combat. "
+                f"Narrate what {npc_name} does — attack a player, cast a spell, move, etc. "
+                f"Use [DAMAGE: Name -X] if they deal damage. Use [NEXT_TURN] at the end to "
+                f"advance to the next combatant. If {npc_name} is defeated or flees, "
+                f"use [NPC_DEFEAT: {npc_name}].",
+                "DM",
+                party_summary,
+            )
+
+        clean_response = await self._process_dm_response(ctx, campaign, raw_response)
+        save_campaign(campaign)
+        await self._send_long(ctx, clean_response)
 
     async def _send_long(self, ctx, text: str):
         """Send a message, splitting if it exceeds Discord's limit."""
@@ -377,7 +465,7 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         campaign.add_session_log(f"Round resolved (AFK timeout): {combined[:120]}")
 
         # Process action tags
-        clean_text, log_entries = parse_action_tags(raw_response, campaign)
+        clean_text, log_entries, combat_events = parse_action_tags(raw_response, campaign)
         clean_text, whispers = extract_whispers(clean_text)
         for char_name, secret_msg in whispers:
             player_id = campaign.get_player_id_by_char_name(char_name)
@@ -390,6 +478,40 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                     pass
         for entry in log_entries:
             campaign.add_session_log(entry)
+        # Combat events from AFK-resolved rounds are rare but handle gracefully
+        for event in combat_events:
+            if event == "COMBAT_START" and not campaign.combat.active:
+                from bot.models.campaign import CombatMap
+                campaign.combat.active = True
+                campaign.combat.initiative_order = []
+                campaign.combat.current_turn_index = 0
+                campaign.combat.round_number = 1
+                campaign.combat.combat_map = CombatMap()
+                await channel.send(
+                    "**COMBAT STARTED!**\n"
+                    "All players: Roll initiative with `!initiative`\n"
+                    "Once everyone has rolled, DM uses `!begincombat` to start turns."
+                )
+            elif event == "COMBAT_END" and campaign.combat.active:
+                rounds = campaign.combat.round_number
+                campaign.combat.active = False
+                campaign.combat.initiative_order = []
+                campaign.combat.current_turn_index = 0
+                campaign.combat.round_number = 1
+                await channel.send(f"**Combat has ended** after {rounds} round(s).\nResume roleplay freely!")
+            elif event.startswith("ADD_NPC:"):
+                parts = event.split(":", 2)
+                if len(parts) == 3:
+                    npc_name = parts[1]
+                    try:
+                        init_roll = int(parts[2])
+                        existing = [e["name"].lower() for e in campaign.combat.initiative_order]
+                        if npc_name.lower() not in existing:
+                            campaign.combat.initiative_order.append({
+                                "name": npc_name, "roll": init_roll, "player_id": None,
+                            })
+                    except ValueError:
+                        pass
         save_campaign(campaign)
 
         # Send the response

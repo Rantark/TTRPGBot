@@ -2,15 +2,25 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.5.3"
+__version__ = "1.6.0"
 __version_info__ = {
     'major': 1,
-    'minor': 5,
-    'patch': 3
+    'minor': 6,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.6.0** - February 21, 2026
+- Claude now controls combat flow! The AI DM can start/end combat and advance turns
+- New action tags: [COMBAT_START], [COMBAT_END], [NEXT_TURN], [ADD_NPC: Name Roll]
+- When Claude starts combat, the bot auto-switches to turn-based initiative mode
+- Claude adds enemy NPCs to initiative order with their rolls automatically
+- [NEXT_TURN] advances to the next combatant — Claude handles NPC turns automatically
+- NPC turns are fully automated: Claude narrates the NPC's action, deals damage, and advances
+- [COMBAT_END] returns the bot to free roleplay mode when combat is over
+- DM can still use manual commands (!combatstart, !begincombat, !next) as fallback
+
 **Version 1.5.3** - February 20, 2026
 - New !introll command — roll initiative during RP and report it to Claude immediately
 - Uses d20 + DEX mod, supports adv/dis, not queued so Claude sees it right away

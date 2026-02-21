@@ -20,17 +20,21 @@ from bot.models.campaign import Campaign
 
 logger = logging.getLogger(__name__)
 
-# Pattern for action tags: [TAG_TYPE: params]
+# Pattern for action tags: [TAG_TYPE: params] and standalone [TAG_TYPE]
 _ACTION_TAG_PATTERN = re.compile(r'\[(\w+):\s*([^\]]+)\]')
+_STANDALONE_TAG_PATTERN = re.compile(r'\[(COMBAT_START|COMBAT_END|NEXT_TURN)\]')
 
 
-def parse_action_tags(response_text: str, campaign: Campaign) -> tuple[str, list[str]]:
+def parse_action_tags(response_text: str, campaign: Campaign) -> tuple[str, list[str], list[str]]:
     """Extract and execute action tags from Claude's response.
 
-    Returns (clean_text, log_entries) where clean_text has tags removed
-    and log_entries describes what was changed.
+    Returns (clean_text, log_entries, combat_events) where clean_text has tags removed,
+    log_entries describes what was changed, and combat_events lists combat state
+    changes that need to be handled by the caller (e.g. 'COMBAT_START', 'COMBAT_END',
+    'NEXT_TURN', 'ADD_NPC:Name:Roll').
     """
     log_entries = []
+    combat_events = []
 
     def _process_tag(match):
         action_type = match.group(1).upper()
@@ -145,12 +149,40 @@ def parse_action_tags(response_text: str, campaign: Campaign) -> tuple[str, list
             # Return the full match so it can be extracted later
             return match.group(0)
 
+        # Combat control tags (with params)
+        elif action_type == "ADD_NPC":
+            # Parse "GoblinName 14" — name and initiative roll
+            parts = params.rsplit(None, 1)
+            if len(parts) == 2:
+                npc_name = parts[0]
+                try:
+                    init_roll = int(parts[1])
+                    combat_events.append(f"ADD_NPC:{npc_name}:{init_roll}")
+                    log_entries.append(f"NPC added to initiative: {npc_name} ({init_roll})")
+                except ValueError:
+                    pass
+
         return ""
 
     clean_text = _ACTION_TAG_PATTERN.sub(_process_tag, response_text)
+
+    # Process standalone combat tags: [COMBAT_START], [COMBAT_END], [NEXT_TURN]
+    def _process_standalone(match):
+        tag = match.group(1).upper()
+        combat_events.append(tag)
+        if tag == "COMBAT_START":
+            log_entries.append("Combat started by DM")
+        elif tag == "COMBAT_END":
+            log_entries.append("Combat ended by DM")
+        elif tag == "NEXT_TURN":
+            pass  # Handled by caller, no log needed
+        return ""
+
+    clean_text = _STANDALONE_TAG_PATTERN.sub(_process_standalone, clean_text)
+
     # Clean up extra whitespace from tag removal
     clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
-    return clean_text, log_entries
+    return clean_text, log_entries, combat_events
 
 
 def extract_whispers(text: str) -> tuple[str, list[tuple[str, str]]]:
@@ -160,7 +192,7 @@ def extract_whispers(text: str) -> tuple[str, list[tuple[str, str]]]:
     """
     whispers = []
     # Match [WHISPER: Name] followed by text until next tag or end of line(s)
-    pattern = re.compile(r'\[WHISPER:\s*([^\]]+)\]\s*(.+?)(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT|LOOT):|$)', re.DOTALL)
+    pattern = re.compile(r'\[WHISPER:\s*([^\]]+)\]\s*(.+?)(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT|LOOT|ADD_NPC):|(?:COMBAT_START|COMBAT_END|NEXT_TURN)\]|$)', re.DOTALL)
     for match in pattern.finditer(text):
         char_name = match.group(1).strip()
         message = match.group(2).strip()
@@ -168,7 +200,7 @@ def extract_whispers(text: str) -> tuple[str, list[tuple[str, str]]]:
             whispers.append((char_name, message))
 
     # Remove whisper tags from display text
-    clean = re.compile(r'\[WHISPER:\s*[^\]]+\]\s*.+?(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT|LOOT):|$)', re.DOTALL)
+    clean = re.compile(r'\[WHISPER:\s*[^\]]+\]\s*.+?(?=\[(?:WHISPER|DAMAGE|CONDITION|NPC_DEFEAT|SPELL_SLOT|LOOT|ADD_NPC):|(?:COMBAT_START|COMBAT_END|NEXT_TURN)\]|$)', re.DOTALL)
     clean_text = clean.sub('', text)
     clean_text = re.sub(r'\n{3,}', '\n\n', clean_text).strip()
     return clean_text, whispers
@@ -190,12 +222,15 @@ FORMATTING FOR DISCORD:
 - Use short paragraphs — this is read on a screen, not a book.
 
 COMBAT:
-- When combat starts, describe the scene and enemies clearly.
-- Tell players to roll initiative.
+- You CONTROL combat flow using hidden tags. When combat should start, use [COMBAT_START] in your response.
+- When combat is over (all enemies defeated or fled), use [COMBAT_END] to return to free roleplay.
+- After narrating a turn's result, use [NEXT_TURN] so the bot advances to the next combatant.
+- To add enemy NPCs to initiative, use [ADD_NPC: GoblinName 14] with their name and initiative roll.
 - On each player's turn, describe the situation and ask what they do.
 - When a player attacks, tell them the result based on their roll vs enemy AC.
 - Track enemy HP internally and describe damage narratively ("The goblin staggers from the blow").
 - Don't reveal exact enemy HP numbers — describe condition instead (healthy, wounded, bloodied, near death).
+- When you defeat an NPC, use [NPC_DEFEAT: Name] to remove them from initiative AND [NEXT_TURN] to advance.
 
 RULES:
 - Ask for specific rolls when needed: "Roll a d20 + your Wisdom modifier" or "Make a DC 15 Athletics check".
@@ -242,6 +277,26 @@ LOOT & TREASURE:
 
 Use this whenever a character finds, receives, or loots items. The bot adds them to the character's inventory automatically.
 
+COMBAT CONTROL (you control the bot's combat state!):
+[COMBAT_START]                — Start combat mode. The bot switches to turn-based initiative.
+                                Players will use !initiative to roll. You add enemies with ADD_NPC.
+[ADD_NPC: GoblinWarrior 14]   — Add an NPC to initiative order with their initiative roll.
+                                Roll initiative for each enemy and add them all.
+[COMBAT_END]                  — End combat. The bot returns to free roleplay mode.
+[NEXT_TURN]                   — Advance to the next combatant's turn. Use this after you
+                                narrate the result of a turn so the bot moves to the next person.
+
+IMPORTANT COMBAT FLOW:
+1. When combat starts, include [COMBAT_START] in your response. Then add all enemy NPCs
+   with [ADD_NPC: Name Roll] tags (roll initiative for each). Describe the enemies and
+   tell players to use !initiative to roll.
+2. After all initiative is rolled and combat begins, narrate each turn. After resolving
+   a turn, include [NEXT_TURN] to advance to the next combatant.
+3. When an NPC is defeated, use [NPC_DEFEAT: Name] to remove them from initiative.
+4. When all enemies are defeated or combat ends, use [COMBAT_END].
+5. For NPC turns, narrate what the NPC does (attacks, movement, etc.) and include
+   [NEXT_TURN] to advance past their turn automatically.
+
 EXAMPLES:
 "The orc's axe crashes down! [DAMAGE: Thandril -9] Thandril, you take 9 slashing damage."
 
@@ -252,8 +307,18 @@ Kael, you feel venom coursing through your veins."
 
 "The chest contains a modest treasure. [LOOT: Thandril | 25 gold, Potion of Healing]"
 
-Use these tags whenever you deal damage, heal, inflict conditions, give loot, or share secrets.
-Always include the tag AND describe the effect narratively."""
+"*The goblins leap from the shadows, weapons drawn!* [COMBAT_START]
+[ADD_NPC: Goblin Warrior 14] [ADD_NPC: Goblin Archer 12] [ADD_NPC: Goblin Shaman 16]
+Everyone roll initiative with `!initiative`!"
+
+"The goblin warrior slashes at Thandril! [DAMAGE: Thandril -7] [NEXT_TURN]"
+
+"Your blade finds its mark — the goblin crumples! [NPC_DEFEAT: Goblin Warrior] [NEXT_TURN]"
+
+"With the last enemy fallen, silence returns to the cave. [COMBAT_END]"
+
+Use these tags whenever you deal damage, heal, inflict conditions, give loot, share secrets,
+or control combat flow. Always include the tag AND describe the effect narratively."""
 
 # Cache control marker — tells Anthropic to cache everything up to this point.
 CACHE_BREAKPOINT = {"type": "ephemeral"}
