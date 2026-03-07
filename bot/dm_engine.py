@@ -422,12 +422,26 @@ def _build_messages(campaign: Campaign, player_action: str, player_name: str,
 class DMEngine:
     """Manages Claude API calls for the DM with prompt caching enabled."""
 
-    def __init__(self):
+    def __init__(self, balance_tracker=None):
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable is required")
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+        self.balance_tracker = balance_tracker
+
+    def _track(self, usage, session_id: str = ""):
+        """Record token usage against the balance tracker if one is attached."""
+        if self.balance_tracker is None:
+            return
+        try:
+            input_tokens  = getattr(usage, "input_tokens", 0) or 0
+            output_tokens = getattr(usage, "output_tokens", 0) or 0
+            self.balance_tracker.track_usage(
+                self.model, input_tokens, output_tokens, session_id
+            )
+        except Exception:
+            logger.warning("Failed to track API usage", exc_info=True)
 
     async def get_dm_response(self, campaign: Campaign, player_action: str,
                               player_name: str, character_summary: str = "",
@@ -456,7 +470,7 @@ class DMEngine:
 
             reply = response.content[0].text
 
-            # Log cache performance
+            # Log cache performance and track usage
             usage = response.usage
             cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
             cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -467,6 +481,7 @@ class DMEngine:
                     f"uncached: {total_input - cache_read - cache_create}, "
                     f"output: {usage.output_tokens}"
                 )
+            self._track(usage, session_id="dm_response")
 
             # Update campaign history
             user_msg = messages[-1]["content"]
@@ -524,7 +539,7 @@ class DMEngine:
 
             reply = response.content[0].text
 
-            # Log cache performance
+            # Log cache performance and track usage
             usage = response.usage
             cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
             cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -535,6 +550,7 @@ class DMEngine:
                     f"uncached: {total_input - cache_read - cache_create}, "
                     f"output: {usage.output_tokens}"
                 )
+            self._track(usage, session_id="dm_narration")
 
             # Update campaign history
             campaign.add_to_history("user", f"[DM Directive: {dm_directive}]")
@@ -571,6 +587,7 @@ class DMEngine:
                 system=system,
                 messages=messages,
             )
+            self._track(response.usage, session_id="recap")
             return response.content[0].text
         except Exception as e:
             logger.exception("Error generating recap")
@@ -589,6 +606,7 @@ class DMEngine:
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._track(response.usage, session_id="simple_response")
             return response.content[0].text
         except Exception as e:
             logger.exception("Error generating simple response")
@@ -635,6 +653,7 @@ class DMEngine:
                 max_tokens=800,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._track(response.usage, session_id="summarize")
             campaign.story_summary = response.content[0].text
             logger.info(
                 f"Summarized {len(to_summarize)} messages, "
@@ -685,6 +704,7 @@ class DMEngine:
                 system=system,
                 messages=messages,
             )
+            self._track(response.usage, session_id="rules_response")
             return response.content[0].text
         except anthropic.APIError as e:
             logger.exception("Anthropic API error")
@@ -718,6 +738,7 @@ class DMEngine:
                 system=system,
                 messages=messages,
             )
+            self._track(response.usage, session_id="narrate_start")
             reply = response.content[0].text
             campaign.add_to_history("user", "[Campaign begins]")
             campaign.add_to_history("assistant", reply)

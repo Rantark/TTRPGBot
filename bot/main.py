@@ -10,6 +10,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from bot.dm_engine import DMEngine
+from bot.balance_tracker import BalanceTracker
 from bot.version import __version__
 from bot.update_checker import UpdateChecker
 
@@ -60,6 +61,7 @@ EXTENSIONS = [
     "bot.cogs.spells",
     "bot.cogs.utility",
     "bot.cogs.info",
+    "bot.cogs.balance",
 ]
 
 
@@ -84,10 +86,12 @@ async def on_ready():
     print(f'  Servers: {len(bot.guilds)}')
     print(f'{"=" * 42}')
 
-    # Initialize the DM engine
+    # Initialize balance tracker and DM engine
     try:
-        bot.dm_engine = DMEngine()
+        bot.balance_tracker = BalanceTracker()
+        bot.dm_engine = DMEngine(balance_tracker=bot.balance_tracker)
         logger.info(f"Claude DM engine initialized (model: {bot.dm_engine.model})")
+        logger.info(f"Balance tracker initialized (balance: ${bot.balance_tracker.current_balance:.2f})")
     except ValueError as e:
         logger.error(f"Failed to initialize DM engine: {e}")
         sys.exit(1)

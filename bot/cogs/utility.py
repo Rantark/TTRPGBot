@@ -375,6 +375,10 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!ping` — Check bot latency and status\n"
                 "`!version` — Show version info and release notes (aliases: `!v`, `!ver`)\n"
                 "`!botinfo` — Detailed bot statistics (aliases: `!about`, `!info`)\n"
+                "`!balance` — Show API balance, usage, and cost stats (aliases: `!bal`, `!apicost`)\n"
+                "`!usage [count]` — Show recent API call history\n"
+                "`!setbalance <amount>` — *(Admin)* Set initial API balance\n"
+                "`!addfunds <amount>` — *(Admin)* Add funds after topping up\n"
                 "`!checkupdate` — *(Admin)* Check for updates on GitHub\n"
                 "`!restart` — *(Admin)* Restart the bot\n"
                 "`!update` — *(Admin)* Pull updates from GitHub and restart\n"
@@ -393,7 +397,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "spell": "spells", "magic": "spells", "casting": "spells", "slots": "spells", "cantrips": "spells",
         "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression", "hitdie": "progression", "hd": "progression", "stabilize": "progression", "deathsave": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
-        "bot": "botinfo", "ping": "botinfo", "version": "botinfo", "about": "botinfo", "info": "botinfo", "admin": "botinfo", "restart": "botinfo", "update": "botinfo", "shutdown": "botinfo",
+        "bot": "botinfo", "ping": "botinfo", "version": "botinfo", "about": "botinfo", "info": "botinfo", "admin": "botinfo", "restart": "botinfo", "update": "botinfo", "shutdown": "botinfo", "balance": "botinfo", "bal": "botinfo", "apicost": "botinfo", "usage": "botinfo", "setbalance": "botinfo", "addfunds": "botinfo",
     }
 
     @commands.command(name="commands")

@@ -2,15 +2,26 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 __version_info__ = {
     'major': 1,
     'minor': 6,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.6.1** - March 7, 2026
+- API balance tracking system — monitors Anthropic token usage and dollar cost
+- New !balance command — shows current balance, % remaining, tokens used, estimated requests (color-coded embed)
+- New !usage [count] — shows recent API call history with per-call cost
+- New !setbalance <amount> — (Admin) set initial balance
+- New !addfunds <amount> — (Admin) add funds after topping up
+- Tracks all Claude calls: dm_response, narration, rules Q&A, recap, summarization, etc.
+- Costs based on model family: Sonnet ($3/$15 per M tokens), Haiku ($0.80/$4), Opus ($15/$75)
+- Console warning when balance drops below $5.00
+- Data persists in data/balance_data.json
+
 **Version 1.6.0** - February 21, 2026
 - Claude now controls combat flow! The AI DM can start/end combat and advance turns
 - New action tags: [COMBAT_START], [COMBAT_END], [NEXT_TURN], [ADD_NPC: Name Roll]
