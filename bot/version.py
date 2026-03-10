@@ -2,15 +2,22 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.6.1"
+__version__ = "1.7.0"
 __version_info__ = {
     'major': 1,
-    'minor': 6,
-    'patch': 1
+    'minor': 7,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.7.0** - March 10, 2026
+- New !exportstory command (alias !story) — Claude writes a polished narrative of the entire campaign
+- Generates a fantasy-novel-style retelling using session logs, story summary, and chat history
+- Uploads the story as a .txt file directly to Discord for everyone to read
+- Automatically generates and uploads the story when a campaign ends (!endcampaign or !forceend)
+- Anyone can use !exportstory at any time during the campaign for a story-so-far
+
 **Version 1.6.1** - March 7, 2026
 - API balance tracking system — monitors Anthropic token usage and dollar cost
 - New !balance command — shows current balance, % remaining, tokens used, estimated requests (color-coded embed)

@@ -1,6 +1,7 @@
 """Campaign management cog: pitch, vote, setup, start, end."""
 
 import asyncio
+import io
 import os
 import random
 import re
@@ -575,6 +576,50 @@ class CampaignCog(commands.Cog, name="Campaign"):
                 except Exception:
                     pass
 
+    async def _generate_and_upload_story(self, ctx, campaign):
+        """Generate a campaign story and upload it as a text file to Discord."""
+        name = campaign.name or "Unnamed Campaign"
+        safe_name = re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')
+
+        await ctx.send(f"*The chronicler begins writing the tale of **{name}**... This may take a moment.*")
+
+        async with ctx.typing():
+            story_text = await self.bot.dm_engine.generate_campaign_story(campaign)
+
+        if story_text.startswith("Failed to generate"):
+            await ctx.send(f"Could not generate the story: {story_text}")
+            return
+
+        # Upload as a .txt file
+        file_bytes = story_text.encode("utf-8")
+        file = discord.File(
+            io.BytesIO(file_bytes),
+            filename=f"{safe_name}_story.txt",
+        )
+        await ctx.send(
+            f"**The Tale of {name}**\n"
+            f"*{len(story_text):,} characters, uploaded as a text file for your reading pleasure.*",
+            file=file,
+        )
+
+    @commands.command(name="exportstory", aliases=["story"])
+    async def export_story(self, ctx: commands.Context):
+        """Generate a polished narrative of the campaign and upload it as a text file.
+
+        Claude writes the entire campaign story as a fantasy narrative,
+        using session logs, conversation history, and character info.
+        Anyone can use this at any time during the campaign.
+
+        Usage: !exportstory
+        Usage: !story
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign or campaign.phase == CampaignPhase.NONE:
+            await ctx.send("No campaign in this channel.")
+            return
+
+        await self._generate_and_upload_story(ctx, campaign)
+
     @commands.command(name="endcampaign")
     async def end_campaign(self, ctx: commands.Context):
         """DM ends the campaign permanently. Archives the game thread/forum post if one exists."""
@@ -587,6 +632,9 @@ class CampaignCog(commands.Cog, name="Campaign"):
             return
 
         name = campaign.name or "Unnamed Campaign"
+
+        # Generate and upload the campaign story BEFORE cleanup deletes the data
+        await self._generate_and_upload_story(ctx, campaign)
 
         # Delete all save files for this campaign
         self._cleanup_campaign(campaign, str(ctx.channel.id))
@@ -612,6 +660,9 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
         name = campaign.name or "Unnamed Campaign"
         dm_mention = f"<@{campaign.dm_id}>" if campaign.dm_id else "Unknown"
+
+        # Generate and upload the campaign story BEFORE cleanup deletes the data
+        await self._generate_and_upload_story(ctx, campaign)
 
         # Delete all save files for this campaign
         self._cleanup_campaign(campaign, str(ctx.channel.id))

@@ -226,7 +226,8 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!setforum #channel` — *(Admin)* Set forum channel for campaign posts\n"
                 "`!clearforum` — *(Admin)* Remove forum setting (use threads instead)\n"
                 "`!debugforum` — *(Admin)* Debug forum channel config and permissions\n"
-                "`!setpace <async|live>` — *(DM/Admin)* Set campaign pace (async=no timeout, live=30min AFK)"
+                "`!setpace <async|live>` — *(DM/Admin)* Set campaign pace (async=no timeout, live=30min AFK)\n"
+                "`!exportstory` — Generate a narrative retelling of the campaign (uploads .txt file, alias: `!story`)"
             ),
         },
         "character": {
@@ -389,7 +390,7 @@ class UtilityCog(commands.Cog, name="Utility"):
 
     # Aliases so users can type partial names
     CATEGORY_ALIASES = {
-        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign", "randompitch": "campaign", "deletepitch": "campaign",
+        "camp": "campaign", "campaigns": "campaign", "suggest": "campaign", "suggestcampaign": "campaign", "setforum": "campaign", "clearforum": "campaign", "debugforum": "campaign", "forceend": "campaign", "forum": "campaign", "setpace": "campaign", "pace": "campaign", "randompitch": "campaign", "deletepitch": "campaign", "exportstory": "campaign", "story": "campaign",
         "char": "character", "characters": "character", "sheet": "character", "equip": "character", "equipment": "character", "inventory": "character", "backstory": "character", "stats": "character", "skills": "character", "saves": "character", "weapons": "character", "ac": "character", "gold": "character", "give": "character", "use": "character", "loot": "campaign",
         "game": "gameplay", "play": "gameplay", "rp": "gameplay", "actions": "gameplay", "dm": "gameplay", "afk": "gameplay", "remind": "gameplay", "hold": "gameplay", "introll": "gameplay", "rollresults": "gameplay", "rr": "gameplay", "cleanup": "gameplay",
         "roll": "dice", "rolls": "dice", "rolling": "dice", "attack": "dice", "spellattack": "dice", "sa": "dice", "spellatk": "dice",

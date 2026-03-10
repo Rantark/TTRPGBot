@@ -747,3 +747,80 @@ class DMEngine:
         except Exception as e:
             logger.exception("Error generating opening narration")
             return f"*The story awaits, but the magic falters...* (Error: {type(e).__name__})"
+
+    async def generate_campaign_story(self, campaign: Campaign) -> str:
+        """Generate a polished narrative retelling of the entire campaign.
+
+        Combines story_summary, session_log, message_history, and character info
+        into source material, then asks Claude to write a well-structured story.
+        Returns the full story text.
+        """
+        # Build source material from everything we have
+        source_parts = []
+
+        source_parts.append(f"CAMPAIGN: {campaign.name or 'Untitled Campaign'}")
+        if campaign.description:
+            source_parts.append(f"PREMISE: {campaign.description}")
+
+        # Characters
+        if campaign.characters:
+            source_parts.append("\nCHARACTERS:")
+            for char in campaign.characters.values():
+                if char.creation_complete:
+                    source_parts.append(
+                        f"- {char.name}, {char.race} {char.char_class} (Level {char.level}) "
+                        f"— played by {char.owner_name}"
+                    )
+                    if char.backstory:
+                        source_parts.append(f"  Backstory: {char.backstory[:300]}")
+
+        # Story summary (accumulated from summarize_and_trim)
+        if campaign.story_summary:
+            source_parts.append(f"\nSTORY SUMMARY (from earlier sessions):\n{campaign.story_summary}")
+
+        # Session log (key events)
+        if campaign.session_log:
+            source_parts.append("\nSESSION LOG (key events in order):")
+            for entry in campaign.session_log:
+                source_parts.append(f"- {entry}")
+
+        # Recent message history (the actual dialogue/narration)
+        if campaign.message_history:
+            source_parts.append("\nRECENT DIALOGUE/NARRATION (most recent exchanges):")
+            for msg in campaign.message_history[-40:]:
+                role = "DM" if msg["role"] == "assistant" else "Player"
+                content = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
+                source_parts.append(f"[{role}]: {content[:500]}")
+
+        source_text = "\n".join(source_parts)
+
+        prompt = (
+            "You are a fantasy author commissioned to write the tale of a D&D campaign. "
+            "Using the source material below, write a polished, engaging narrative retelling "
+            "of the entire campaign story.\n\n"
+            "GUIDELINES:\n"
+            "- Write in third person, past tense, like a fantasy novel\n"
+            "- Include all major plot events, battles, discoveries, and character moments\n"
+            "- Give each player character their voice and personality\n"
+            "- Include NPC interactions and memorable dialogue\n"
+            "- Describe combat encounters dramatically but concisely\n"
+            "- Structure with clear sections or chapters if the story is long\n"
+            "- Open with a title and the party roster\n"
+            "- End with where the story left off or how it concluded\n"
+            "- Write as much as needed to capture the full story — do not cut short\n\n"
+            f"SOURCE MATERIAL:\n{source_text}"
+        )
+
+        try:
+            import asyncio
+            response = await asyncio.to_thread(
+                self.client.messages.create,
+                model=self.model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            self._track(response.usage, session_id="campaign_story")
+            return response.content[0].text
+        except Exception as e:
+            logger.exception("Error generating campaign story")
+            return f"Failed to generate story: {type(e).__name__}: {e}"
