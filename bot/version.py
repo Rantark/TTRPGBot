@@ -2,15 +2,24 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.1"
+__version__ = "1.8.2"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 1
+    'patch': 2
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.2** - March 13, 2026
+- !suggestcampaign now supports both D&D 5e and World of Darkness
+- First step asks to choose game system before suggesting campaign ideas
+- WoD suggestions include gothic themes, setting cities, and key factions
+- D&D suggestions unchanged with starting levels and fantasy hooks
+- System-appropriate play style options (e.g. Political Intrigue, Horror for WoD)
+- Created campaign uses the correct game system for character creation
+- Fixed suggestion messages exceeding Discord 2000-character limit
+
 **Version 1.8.1** - March 13, 2026
 - Overhauled WoD character creation UX with rich Discord embeds
 - Added emoji icons for clans, covenants, virtues, vices, and all steps
