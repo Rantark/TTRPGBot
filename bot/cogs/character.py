@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 
 from bot.models.character import Character
-from bot.models.campaign import CampaignPhase
+from bot.models.campaign import CampaignPhase, GameSystem
 from bot.data.races import get_race_names, resolve_race, DRACONIC_ANCESTRIES, RACES
 from bot.data.classes import get_class_names, get_class_data, CLASSES
 from bot.data.backgrounds import get_background_names, get_background_data
@@ -352,6 +352,10 @@ class CharacterCog(commands.Cog, name="Character"):
         campaign = self._get_campaign(ctx)
         if not campaign:
             await ctx.send("No campaign in this channel. Ask the DM to use `!newcampaign` first.")
+            return
+        # Redirect WoD campaigns to the WoD character creation
+        if campaign.game_system == GameSystem.WOD:
+            await ctx.send("This is a **World of Darkness** campaign! Use `!createwod` instead.")
             return
         if campaign.phase not in (CampaignPhase.SETUP, CampaignPhase.ACTIVE):
             await ctx.send("Campaign isn't in setup or active phase yet.")

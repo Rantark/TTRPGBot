@@ -3,8 +3,9 @@
 import discord
 from discord.ext import commands
 
-from bot.models.campaign import CampaignPhase
+from bot.models.campaign import CampaignPhase, GameSystem
 from bot.dice import roll_initiative, parse_adv_dis
+from bot.wod_dice import roll_initiative_wod
 from bot.storage import load_campaign, save_campaign
 
 
@@ -67,11 +68,13 @@ class CombatCog(commands.Cog, name="Combat"):
 
     @commands.command(name="initiative")
     async def roll_initiative_cmd(self, ctx: commands.Context, *, args: str = ""):
-        """Roll initiative for your character (d20 + DEX modifier).
+        """Roll initiative for your character.
+
+        D&D: d20 + DEX modifier
+        WoD: Dexterity + Composure + d10
 
         Usage: !initiative
-        Usage: !initiative adv
-        Usage: !initiative dis
+        Usage: !initiative adv (D&D only)
         """
         campaign = self._get_campaign(ctx)
         if not campaign:
@@ -86,11 +89,26 @@ class CombatCog(commands.Cog, name="Combat"):
             await ctx.send("You don't have a character.")
             return
 
-        # Parse advantage/disadvantage
-        _, advantage, disadvantage = parse_adv_dis(args) if args else ("", False, False)
-
-        dex_mod = char.get_modifier("DEX")
-        result = roll_initiative(dex_mod, advantage=advantage, disadvantage=disadvantage)
+        if campaign.game_system == GameSystem.WOD:
+            # WoD initiative: Dexterity + Composure + d10
+            modifier = 0
+            if args.strip():
+                try:
+                    modifier = int(args.strip().replace("+", ""))
+                except ValueError:
+                    pass
+            dex = char.attributes.get("Dexterity", 1)
+            composure = char.attributes.get("Composure", 1)
+            result = roll_initiative_wod(dex, composure, modifier)
+            total = result["total"]
+            breakdown = result["breakdown"]
+        else:
+            # D&D initiative: d20 + DEX modifier
+            _, advantage, disadvantage = parse_adv_dis(args) if args else ("", False, False)
+            dex_mod = char.get_modifier("DEX")
+            result = roll_initiative(dex_mod, advantage=advantage, disadvantage=disadvantage)
+            total = result["total"]
+            breakdown = result["breakdown"]
 
         # Remove existing entry for this player
         campaign.combat.initiative_order = [
@@ -100,13 +118,13 @@ class CombatCog(commands.Cog, name="Combat"):
 
         campaign.combat.initiative_order.append({
             "name": char.name,
-            "roll": result["total"],
+            "roll": total,
             "player_id": str(ctx.author.id),
         })
 
         save_campaign(campaign)
 
-        await ctx.send(f"**{char.name}** rolls initiative: {result['breakdown']}")
+        await ctx.send(f"**{char.name}** rolls initiative: {breakdown}")
 
     @commands.command(name="addnpc")
     async def add_npc_initiative(self, ctx: commands.Context, name: str, initiative: int):

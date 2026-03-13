@@ -55,6 +55,7 @@ update_checker = UpdateChecker(bot)
 EXTENSIONS = [
     "bot.cogs.campaign",
     "bot.cogs.character",
+    "bot.cogs.wod_character",
     "bot.cogs.gameplay",
     "bot.cogs.combat",
     "bot.cogs.progression",

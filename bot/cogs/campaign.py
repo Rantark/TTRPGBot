@@ -9,7 +9,7 @@ import re
 import discord
 from discord.ext import commands
 
-from bot.models.campaign import Campaign, CampaignPhase, CampaignPace
+from bot.models.campaign import Campaign, CampaignPhase, CampaignPace, GameSystem
 from bot.storage import save_campaign, save_campaign_by_id, load_campaign, delete_campaign, load_guild_settings, save_guild_settings
 
 
@@ -65,26 +65,79 @@ class CampaignCog(commands.Cog, name="Campaign"):
                            "Use `!endcampaign` to end it first.")
             return
 
-        campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id))
+        # Ask for game system selection
+        msg = await ctx.send(
+            "**New Campaign — Choose Game System**\n\n"
+            "1\u20e3 **D&D 5th Edition** — Classic fantasy adventure\n"
+            "2\u20e3 **World of Darkness** — Vampire: The Requiem / Gothic horror\n\n"
+            "*React to choose or type `1` or `2`*"
+        )
+        emojis = ["1\u20e3", "2\u20e3"]
+        for emoji in emojis:
+            await msg.add_reaction(emoji)
+
+        system_map = {"1\u20e3": "dnd5e", "2\u20e3": "wod"}
+
+        def check_reaction(reaction, user):
+            return (
+                user == ctx.author
+                and str(reaction.emoji) in emojis
+                and reaction.message.id == msg.id
+            )
+
+        def check_message(m):
+            return (
+                m.author == ctx.author
+                and m.channel == ctx.channel
+                and m.content.strip() in ("1", "2")
+            )
+
+        game_system = None
+        done, pending = await asyncio.wait(
+            [
+                asyncio.ensure_future(self.bot.wait_for("reaction_add", timeout=60.0, check=check_reaction)),
+                asyncio.ensure_future(self.bot.wait_for("message", timeout=60.0, check=check_message)),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+        try:
+            result = done.pop().result()
+            if isinstance(result, tuple):
+                reaction, _ = result
+                game_system = system_map.get(str(reaction.emoji), "dnd5e")
+            else:
+                game_system = "dnd5e" if result.content.strip() == "1" else "wod"
+        except (asyncio.TimeoutError, Exception):
+            await ctx.send("Campaign creation timed out. Try again with `!newcampaign`.")
+            return
+
+        campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id), game_system=game_system)
         campaign.dm_id = str(ctx.author.id)
         campaign.setup_channel_id = str(ctx.channel.id)
         campaign.phase = CampaignPhase.PITCHING
+
+        system_label = "World of Darkness" if game_system == "wod" else "D&D 5e"
+        create_cmd = "`!createwod`" if game_system == "wod" else "`!createchar`"
 
         if name:
             campaign.name = name
             campaign.phase = CampaignPhase.SETUP
             save_campaign(campaign)
             await ctx.send(
-                f"**Campaign Created: {name}**\n"
+                f"**Campaign Created: {name}** ({system_label})\n"
                 f"DM: {ctx.author.display_name}\n"
-                f"Phase: **Setup** — Players can now create characters with `!createchar`\n"
-                f"DM: Use `!setlevel <level>` to set the starting level (default: 1)\n"
-                f"When everyone is ready, the DM uses `!startcampaign` to begin!"
+                f"Phase: **Setup** — Players can now create characters with {create_cmd}\n"
+                + (f"DM: Use `!setlevel <level>` to set the starting level (default: 1)\n" if game_system == "dnd5e" else "")
+                + "When everyone is ready, the DM uses `!startcampaign` to begin!"
             )
         else:
             save_campaign(campaign)
             await ctx.send(
-                "**New Campaign Started!**\n"
+                f"**New Campaign Started!** ({system_label})\n"
                 f"DM: {ctx.author.display_name}\n"
                 "Phase: **Pitching** — Use `!pitch <title> | <description>` to propose campaign concepts.\n"
                 "Players vote with `!vote <number>`. DM picks with `!selectpitch <number>`."
@@ -422,7 +475,8 @@ class CampaignCog(commands.Cog, name="Campaign"):
 
     async def _start_in_forum(self, ctx: commands.Context, campaign: Campaign, forum_channel: discord.ForumChannel):
         """Start the campaign by creating a new forum post thread."""
-        campaign_name = campaign.name or "D&D Campaign"
+        system_label = "WoD" if campaign.game_system == GameSystem.WOD else "D&D"
+        campaign_name = campaign.name or f"{system_label} Campaign"
         player_mentions = ", ".join(f"<@{pid}>" for pid in campaign.characters.keys())
 
         await ctx.send(f"Creating forum post for **{campaign_name}**...")
@@ -884,7 +938,8 @@ class CampaignCog(commands.Cog, name="Campaign"):
             await ctx.send("No campaign in this channel. Use `!newcampaign` to create one.")
             return
 
-        lines = [f"**{campaign.name or 'Unnamed Campaign'}**"]
+        system_label = "World of Darkness" if campaign.game_system == GameSystem.WOD else "D&D 5e"
+        lines = [f"**{campaign.name or 'Unnamed Campaign'}** ({system_label})"]
         lines.append(f"Phase: **{campaign.phase.value.title()}**")
         if campaign.dm_id:
             lines.append(f"DM: <@{campaign.dm_id}>")

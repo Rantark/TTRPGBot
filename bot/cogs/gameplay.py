@@ -11,9 +11,10 @@ import time
 import discord
 from discord.ext import commands, tasks
 
-from bot.models.campaign import CampaignPhase, CampaignPace
+from bot.models.campaign import CampaignPhase, CampaignPace, GameSystem
 from bot.data.rules import ABILITY_NAMES, ABILITY_FULL_NAMES, SKILLS, modifier_str
 from bot.dice import parse_and_roll, roll_check, roll_initiative, parse_adv_dis
+from bot.wod_dice import roll_pool, parse_pool_args, roll_initiative_wod
 from bot.dm_engine import parse_action_tags, extract_whispers
 from bot.storage import load_campaign, save_campaign, list_campaigns
 from bot.utils.fuzzy_match import suggest_skill, suggest_ability
@@ -1825,6 +1826,176 @@ class GameplayCog(commands.Cog, name="Gameplay"):
                 f"  Spell Attack: {atk_result['breakdown']}{nat}\n"
                 f"  Damage: {dmg_result['breakdown']}"
             )
+
+
+    # ------------------------------------------------------------------
+    # WoD-specific commands
+    # ------------------------------------------------------------------
+
+    @commands.command(name="pool", aliases=["dicepool", "dp"])
+    async def wod_pool(self, ctx: commands.Context, *, args: str = ""):
+        """Roll a World of Darkness dice pool (d10s, 8+ = success).
+
+        Usage: !pool 6           (roll 6 dice)
+        Usage: !pool 4 9again    (roll 4 dice with 9-again)
+        Usage: !pool 3 rote      (rote action — reroll failures)
+        Usage: !pool 0           (chance die)
+
+        Successes on 8, 9, 10. Tens explode (10-again by default).
+        5+ successes = Exceptional Success.
+        """
+        if not args:
+            await ctx.send(
+                "**Usage:** `!pool <number of dice> [9again|8again|noagain] [rote]`\n"
+                "Example: `!pool 6`, `!pool 4 9again`, `!pool 0` (chance die)"
+            )
+            return
+
+        args, again, rote = parse_pool_args(args)
+
+        try:
+            pool_size = int(args.strip())
+        except ValueError:
+            await ctx.send("Provide a number of dice to roll. Example: `!pool 6`")
+            return
+
+        result = roll_pool(pool_size, again=again, rote=rote)
+        await ctx.send(f"**{ctx.author.display_name}** — {result['breakdown']}")
+
+    @commands.command(name="wodroll", aliases=["wr"])
+    async def wod_roll(self, ctx: commands.Context, *, args: str = ""):
+        """Roll Attribute + Skill as a WoD dice pool using your character.
+
+        Usage: !wodroll Strength + Brawl
+        Usage: !wodroll Wits + Investigation
+        Usage: !wodroll Dexterity + Firearms 9again
+
+        The bot calculates your dice pool from your character sheet.
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign or campaign.game_system != GameSystem.WOD:
+            await ctx.send("This command is for World of Darkness campaigns.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        args, again, rote = parse_pool_args(args)
+
+        # Parse "Attribute + Skill" or "Attribute + Skill + modifier"
+        parts = [p.strip() for p in args.replace("+", " + ").split("+")]
+        parts = [p.strip() for p in parts if p.strip()]
+
+        pool_size = 0
+        labels = []
+
+        from bot.models.wod_character import WOD_ALL_ATTRIBUTES, WOD_ALL_SKILLS
+
+        for part in parts:
+            # Try as number modifier
+            try:
+                mod = int(part)
+                pool_size += mod
+                labels.append(str(mod))
+                continue
+            except ValueError:
+                pass
+
+            # Try as attribute
+            matched = False
+            for attr in WOD_ALL_ATTRIBUTES:
+                if attr.lower() == part.lower() or attr.lower().startswith(part.lower()):
+                    pool_size += char.attributes.get(attr, 1)
+                    labels.append(f"{attr} ({char.attributes.get(attr, 1)})")
+                    matched = True
+                    break
+
+            if matched:
+                continue
+
+            # Try as skill
+            for skill in WOD_ALL_SKILLS:
+                if skill.lower() == part.lower() or skill.lower().startswith(part.lower()) or part.lower() in skill.lower():
+                    pool_size += char.skills.get(skill, 0)
+                    labels.append(f"{skill} ({char.skills.get(skill, 0)})")
+                    matched = True
+                    break
+
+            if not matched:
+                await ctx.send(f"Unknown attribute/skill: **{part}**")
+                return
+
+        label_str = " + ".join(labels)
+        result = roll_pool(pool_size, again=again, rote=rote)
+        await ctx.send(f"**{char.name}** — {label_str} = {pool_size} dice\n{result['breakdown']}")
+
+    @commands.command(name="wodintroll", aliases=["wir"])
+    async def wod_initiative_roll(self, ctx: commands.Context, *, args: str = ""):
+        """Roll WoD initiative (Dexterity + Composure + d10) during RP.
+
+        Reports the roll to Claude immediately (not queued).
+
+        Usage: !wodintroll
+        Usage: !wodintroll +2 (with modifier)
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._require_active(campaign) or campaign.game_system != GameSystem.WOD:
+            await ctx.send("This command is for active World of Darkness campaigns.")
+            return
+
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            await ctx.send("You don't have a character.")
+            return
+
+        # Parse optional modifier
+        modifier = 0
+        if args.strip():
+            try:
+                modifier = int(args.strip().replace("+", ""))
+            except ValueError:
+                pass
+
+        dex = char.attributes.get("Dexterity", 1)
+        composure = char.attributes.get("Composure", 1)
+        result = roll_initiative_wod(dex, composure, modifier)
+
+        await ctx.send(
+            f"**{char.name}** rolls initiative!\n"
+            f"  {result['breakdown']}"
+        )
+
+        # Report to Claude immediately
+        init_context = (
+            f"[INITIATIVE ROLL] {char.name} rolled initiative: {result['total']} "
+            f"(Dex {dex} + Composure {composure} + d10={result['roll']})"
+        )
+        async with ctx.typing():
+            dm_response = await self.bot.dm_engine.get_dm_response(
+                campaign, init_context, char.name, char.short_summary(),
+                extra_context="This is an initiative roll for upcoming combat."
+            )
+
+        clean_text, log_entries, combat_events = parse_action_tags(dm_response, campaign)
+        clean_text, whispers = extract_whispers(clean_text)
+        save_campaign(campaign)
+
+        if clean_text:
+            await self._send_long(ctx, clean_text)
+
+        for target_name, message in whispers:
+            player_id = campaign.get_player_id_by_char_name(target_name)
+            if player_id:
+                try:
+                    user = await self.bot.fetch_user(int(player_id))
+                    await user.send(f"*[DM whispers to {target_name}]*\n{message}")
+                except Exception:
+                    pass
+
+        if combat_events:
+            await self._handle_combat_events(ctx, campaign, combat_events)
 
 
 async def setup(bot: commands.Bot):

@@ -4,6 +4,11 @@ from enum import Enum
 from bot.models.character import Character
 
 
+class GameSystem(str, Enum):
+    DND5E = "dnd5e"      # Dungeons & Dragons 5th Edition
+    WOD = "wod"          # World of Darkness (Chronicles of Darkness / Vampire the Requiem)
+
+
 class CampaignPace(str, Enum):
     ASYNC = "async"  # No timeout — players take as long as they need
     LIVE = "live"    # 30-minute AFK timeout per round
@@ -160,9 +165,10 @@ class CombatState:
 class Campaign:
     """Represents a campaign in a Discord channel."""
 
-    def __init__(self, channel_id: str, guild_id: str):
+    def __init__(self, channel_id: str, guild_id: str, game_system: str = "dnd5e"):
         self.channel_id = channel_id
         self.guild_id = guild_id
+        self.game_system = GameSystem(game_system)
         self.phase = CampaignPhase.NONE
         self.dm_id = None  # Discord user ID of the person who runs commands
         self.name = ""
@@ -268,6 +274,7 @@ class Campaign:
         return {
             "channel_id": self.channel_id,
             "guild_id": self.guild_id,
+            "game_system": self.game_system.value,
             "phase": self.phase.value,
             "dm_id": self.dm_id,
             "name": self.name,
@@ -296,15 +303,24 @@ class Campaign:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Campaign":
-        c = cls(data["channel_id"], data["guild_id"])
+        game_system = data.get("game_system", "dnd5e")
+        c = cls(data["channel_id"], data["guild_id"], game_system=game_system)
         c.phase = CampaignPhase(data.get("phase", "none"))
         c.dm_id = data.get("dm_id")
         c.name = data.get("name", "")
         c.description = data.get("description", "")
-        c.characters = {
-            pid: Character.from_dict(cdata)
-            for pid, cdata in data.get("characters", {}).items()
-        }
+        # Deserialize characters based on game system
+        if c.game_system == GameSystem.WOD:
+            from bot.models.wod_character import WoDCharacter
+            c.characters = {
+                pid: WoDCharacter.from_dict(cdata)
+                for pid, cdata in data.get("characters", {}).items()
+            }
+        else:
+            c.characters = {
+                pid: Character.from_dict(cdata)
+                for pid, cdata in data.get("characters", {}).items()
+            }
         c.combat = CombatState.from_dict(data.get("combat", {}))
         c.pitches = data.get("pitches", [])
         c.message_history = data.get("message_history", [])

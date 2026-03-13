@@ -3,7 +3,7 @@
 import discord
 from discord.ext import commands
 
-from bot.models.campaign import CampaignPhase
+from bot.models.campaign import CampaignPhase, GameSystem
 from bot.storage import load_campaign, save_campaign
 
 
@@ -52,24 +52,35 @@ class UtilityCog(commands.Cog, name="Utility"):
 
         if campaign.characters:
             lines.append("\n**Party Status:**")
+            is_wod = campaign.game_system == GameSystem.WOD
             for char in campaign.characters.values():
                 if not char.creation_complete:
                     lines.append(f"  {char.owner_name} — *Creating character...*")
                     continue
-                hp_pct = (char.current_hp / char.max_hp * 100) if char.max_hp else 0
-                if hp_pct >= 75:
-                    condition = "Healthy"
-                elif hp_pct >= 50:
-                    condition = "Wounded"
-                elif hp_pct >= 25:
-                    condition = "Bloodied"
-                elif hp_pct > 0:
-                    condition = "Critical"
+                if is_wod:
+                    # WoD status display
+                    health_dmg = sum(1 for d in char.health_track if d) if hasattr(char, 'health_track') else 0
+                    health_cur = char.health_max - health_dmg
+                    conds = f" | {', '.join(char.conditions)}" if hasattr(char, 'conditions') and char.conditions else ""
+                    lines.append(
+                        f"  **{char.name}** — Health {health_cur}/{char.health_max} | "
+                        f"Vitae {char.vitae}/{char.vitae_max} | Humanity {char.humanity}{conds}"
+                    )
                 else:
-                    condition = "DOWN"
-                insp = " | Inspiration" if char.inspiration else ""
-                conds = f" | {', '.join(char.conditions)}" if char.conditions else ""
-                lines.append(f"  **{char.name}** — HP {char.current_hp}/{char.max_hp} ({condition}) | AC {char.ac}{insp}{conds}")
+                    hp_pct = (char.current_hp / char.max_hp * 100) if char.max_hp else 0
+                    if hp_pct >= 75:
+                        condition = "Healthy"
+                    elif hp_pct >= 50:
+                        condition = "Wounded"
+                    elif hp_pct >= 25:
+                        condition = "Bloodied"
+                    elif hp_pct > 0:
+                        condition = "Critical"
+                    else:
+                        condition = "DOWN"
+                    insp = " | Inspiration" if char.inspiration else ""
+                    conds = f" | {', '.join(char.conditions)}" if char.conditions else ""
+                    lines.append(f"  **{char.name}** — HP {char.current_hp}/{char.max_hp} ({condition}) | AC {char.ac}{insp}{conds}")
 
         await ctx.send("\n".join(lines))
 
@@ -369,6 +380,27 @@ class UtilityCog(commands.Cog, name="Utility"):
                 "`!commands` — This help menu"
             ),
         },
+        "wod": {
+            "title": "World of Darkness",
+            "description": "WoD-specific commands for Vampire: The Requiem campaigns.",
+            "commands": (
+                "**Character Creation:**\n"
+                "`!createwod` — Start WoD character creation (Vampire: The Requiem)\n"
+                "`!wcc <choice>` — Make a creation choice during WoD character creation\n\n"
+                "**Character Info:**\n"
+                "`!wodsheet` — View your WoD character sheet (alias: `!wsheet`)\n"
+                "`!vitae` — View your Vitae | `!vitae +/-<amt>` — Adjust\n"
+                "`!humanity` — View your Humanity rating\n"
+                "`!willpower` — View Willpower | `!willpower +/-<amt>` — Adjust (alias: `!wp`)\n\n"
+                "**Dice Rolls:**\n"
+                "`!pool <dice>` — Roll a WoD dice pool (d10s, 8+ success) (aliases: `!dicepool`, `!dp`)\n"
+                "`!pool <dice> 9again` — Roll with 9-again (also `8again`, `noagain`, `rote`)\n"
+                "`!wodroll <Attr> + <Skill>` — Roll using your character stats (alias: `!wr`)\n"
+                "`!wodintroll` — Roll WoD initiative (Dex+Composure+d10) and report to ST (alias: `!wir`)\n\n"
+                "**Notes:**\n"
+                "The `!initiative`, `!roll`, `!action`, and other standard commands also work in WoD campaigns."
+            ),
+        },
         "botinfo": {
             "title": "Bot Info & Admin",
             "description": "Bot status, version info, and admin controls.",
@@ -399,6 +431,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         "prog": "progression", "level": "progression", "rest": "progression", "hp": "progression", "xp": "progression", "feat": "progression", "feats": "progression", "modifier": "progression", "mod": "progression", "buff": "progression", "modifiers": "progression", "hitdie": "progression", "hd": "progression", "stabilize": "progression", "deathsave": "progression",
         "util": "utility", "utils": "utility", "misc": "utility",
         "bot": "botinfo", "ping": "botinfo", "version": "botinfo", "about": "botinfo", "info": "botinfo", "admin": "botinfo", "restart": "botinfo", "update": "botinfo", "shutdown": "botinfo", "balance": "botinfo", "bal": "botinfo", "apicost": "botinfo", "usage": "botinfo", "setbalance": "botinfo", "addfunds": "botinfo",
+        "vampire": "wod", "vtm": "wod", "vtr": "wod", "requiem": "wod", "darkness": "wod", "kindred": "wod", "wodchar": "wod", "createwod": "wod", "wodcreate": "wod", "pool": "wod", "dicepool": "wod", "dp": "wod", "wodroll": "wod", "wr": "wod", "wodsheet": "wod", "wsheet": "wod", "vitae": "wod", "blood": "wod", "humanity": "wod", "willpower": "wod", "wp": "wod", "wodintroll": "wod", "wir": "wod",
     }
 
     @commands.command(name="commands")
@@ -414,7 +447,7 @@ class UtilityCog(commands.Cog, name="Utility"):
         if not category:
             # Show the overview menu
             lines = [
-                "**D&D 5e Bot — Command Categories**",
+                "**TTRPGBot — Command Categories** (D&D 5e + World of Darkness)",
                 "Type `!commands <category>` for details.\n",
             ]
             for key, cat in self.HELP_CATEGORIES.items():

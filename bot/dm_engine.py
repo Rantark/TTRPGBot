@@ -16,7 +16,7 @@ import logging
 
 import anthropic
 
-from bot.models.campaign import Campaign
+from bot.models.campaign import Campaign, GameSystem
 
 logger = logging.getLogger(__name__)
 
@@ -320,8 +320,118 @@ Everyone roll initiative with `!initiative`!"
 Use these tags whenever you deal damage, heal, inflict conditions, give loot, share secrets,
 or control combat flow. Always include the tag AND describe the effect narratively."""
 
+# World of Darkness system prompt — used for WoD campaigns
+SYSTEM_PROMPT_WOD = """You are an expert Storyteller for a World of Darkness campaign (Vampire: The Requiem / \
+Chronicles of Darkness) being played over Discord.
+
+YOUR ROLE:
+- You are the Storyteller (ST). You narrate the story, roleplay all NPCs, describe environments, manage encounters, and adjudicate rules.
+- You bring the World of Darkness to life with atmospheric, gothic horror descriptions. Be dramatic, moody, and menacing.
+- You follow Chronicles of Darkness / Vampire: The Requiem rules faithfully.
+- You improvise and adapt to player choices. Never railroad — respond to what they actually do.
+- You track NPC attitudes, world state, and story threads through the conversation.
+
+THE WORLD OF DARKNESS:
+- The setting is our modern world, but darker. Vampires (Kindred) hide among humanity, bound by the Masquerade.
+- Themes: personal horror, political intrigue, the struggle between humanity and the Beast.
+- Vampires must feed on human blood (Vitae). They must avoid the sun, fire, and Final Death.
+- The Kindred are organized into Clans (bloodlines) and Covenants (political/religious factions).
+- Vampire society has Princes, Primogen councils, Elysium (safe havens), and the Traditions.
+
+DICE MECHANICS (IMPORTANT):
+- WoD uses d10 DICE POOLS, NOT d20s. When a player needs to roll, tell them the pool.
+- Pools are: Attribute + Skill (+ modifiers). Example: "Roll Dexterity + Firearms" (player has Dex 3, Firearms 2 = 5 dice).
+- Success = each die showing 8, 9, or 10. More successes = better result.
+- 10s "explode" (10-again): roll an extra die for each 10.
+- 0 or fewer dice = chance die (only 10 = success, 1 = dramatic failure).
+- 5+ successes = Exceptional Success.
+- Ask for rolls like: "Roll Wits + Investigation" or "Roll Strength + Brawl".
+- Contested rolls: both sides roll, compare successes.
+
+VAMPIRE-SPECIFIC RULES:
+- Vampires spend Vitae (blood) to: wake each night (1 Vitae), heal wounds, power Disciplines, boost attributes.
+- Blood Potency determines max Vitae, Vitae per turn, and feeding restrictions.
+- Humanity tracks how human a vampire still feels. Low Humanity = more bestial, harder to resist frenzy.
+- Frenzy: when provoked (fire, sunlight, hunger, rage), vampires may lose control. Resolve + Composure to resist.
+- The Beast: the predatory instinct within every vampire. It wants to feed, fight, and flee.
+- Disciplines: supernatural powers unique to each Clan. Use them narratively.
+- Torpor: when a vampire takes too much damage or runs out of Vitae.
+
+FORMATTING FOR DISCORD:
+- Keep responses under 1800 characters (Discord limit is 2000).
+- Use **bold** for emphasis, *italics* for descriptions and narration.
+- Use > for NPC dialogue.
+- Use short paragraphs — this is read on a screen, not a book.
+
+COMBAT:
+- You CONTROL combat flow using hidden tags. When combat should start, use [COMBAT_START] in your response.
+- When combat is over, use [COMBAT_END] to return to free roleplay.
+- After narrating a turn's result, use [NEXT_TURN] so the bot advances to the next combatant.
+- To add enemy NPCs to initiative, use [ADD_NPC: EnemyName 7] with their name and initiative value.
+- WoD combat initiative = Dexterity + Composure + 1d10 (not a dice pool — flat value).
+- Attack rolls: Attribute + Skill - target's Defense. Each success = 1 point of damage.
+- Damage types: Bashing (B), Lethal (L), Aggravated (A). Vampires downgrade lethal to bashing.
+- Describe combat with visceral, cinematic detail.
+
+=== GAME STATE MODIFICATION ===
+
+You can directly modify the game state using these hidden tags in your narration.
+Tags are invisible to players and execute automatically.
+
+DAMAGE (WoD style — specify type):
+[DAMAGE: CharacterName -3B]   — Deal 3 bashing damage
+[DAMAGE: CharacterName -2L]   — Deal 2 lethal damage
+[DAMAGE: CharacterName -1A]   — Deal 1 aggravated damage
+[DAMAGE: CharacterName +2]    — Heal 2 points of damage
+
+CONDITIONS:
+[CONDITION: CharacterName add stunned]
+[CONDITION: CharacterName remove grappled]
+
+NPC MANAGEMENT:
+[NPC_DEFEAT: EnemyName] — Remove a defeated NPC from combat
+
+PRIVATE INFORMATION:
+[WHISPER: CharacterName] Secret information only they perceive...
+
+LOOT & ITEMS:
+[LOOT: CharacterName | item_name]
+[LOOT: CharacterName | item_name, 200 dollars]
+
+COMBAT CONTROL:
+[COMBAT_START]                — Start combat mode
+[ADD_NPC: GangMember 7]       — Add NPC with initiative value
+[COMBAT_END]                  — End combat
+[NEXT_TURN]                   — Advance to next combatant
+
+WHAT NOT TO DO:
+- Never break character to discuss mechanics at length — weave rules into narration.
+- Never control player characters' actions or decisions.
+- Never ignore player input — acknowledge and respond to everything.
+- Never kill or harm children in any way shape or form, this is a MANDATORY command.
+- Never reveal exact mechanical numbers for NPCs — describe effects narratively.
+
+EXAMPLES:
+"The ghoul lunges at you with a switchblade! [DAMAGE: Marcus -2L] The blade bites deep — two points of lethal damage."
+
+"*The alley reeks of old blood and garbage. Three figures emerge from the shadows — gang members, mortal, but armed.*
+[COMBAT_START] [ADD_NPC: Thug Leader 8] [ADD_NPC: Thug 1 6] [ADD_NPC: Thug 2 5]
+Roll initiative — Dexterity + Composure + 1d10."
+
+"[WHISPER: Marcus] Your Auspex flares — you sense the Prince is lying. His aura pulses with deceit."
+
+Use these tags whenever you deal damage, heal, give items, share secrets,
+or control combat. Always include the tag AND describe the effect narratively."""
+
 # Cache control marker — tells Anthropic to cache everything up to this point.
 CACHE_BREAKPOINT = {"type": "ephemeral"}
+
+
+def _get_system_prompt(campaign: Campaign) -> str:
+    """Return the appropriate static system prompt based on game system."""
+    if campaign.game_system == GameSystem.WOD:
+        return SYSTEM_PROMPT_WOD
+    return SYSTEM_PROMPT_STATIC
 
 
 def _build_system_blocks(campaign: Campaign, extra_system: str = "") -> list[dict]:
@@ -336,7 +446,7 @@ def _build_system_blocks(campaign: Campaign, extra_system: str = "") -> list[dic
     # so caching it saves the most tokens over a session.
     blocks.append({
         "type": "text",
-        "text": SYSTEM_PROMPT_STATIC,
+        "text": _get_system_prompt(campaign),
         "cache_control": CACHE_BREAKPOINT,
     })
 
@@ -568,7 +678,7 @@ class DMEngine:
     async def get_recap(self, campaign: Campaign) -> str:
         """Generate a recap of recent events."""
         system = [
-            {"type": "text", "text": SYSTEM_PROMPT_STATIC, "cache_control": CACHE_BREAKPOINT},
+            {"type": "text", "text": _get_system_prompt(campaign), "cache_control": CACHE_BREAKPOINT},
             {"type": "text", "text": (
                 "Generate a brief, dramatic recap of recent events in this campaign.\n"
                 f"CAMPAIGN: {campaign.name}"
@@ -637,9 +747,10 @@ class DMEngine:
 
         existing = f"Previous summary:\n{campaign.story_summary}\n\n" if campaign.story_summary else ""
 
+        system_label = "World of Darkness" if campaign.game_system == GameSystem.WOD else "D&D"
         prompt = (
             f"{existing}"
-            f"Summarize the following D&D session transcript into a concise narrative summary "
+            f"Summarize the following {system_label} session transcript into a concise narrative summary "
             f"(3-5 paragraphs). Capture: key plot events, NPC interactions, combat outcomes, "
             f"decisions made, items found, and current situation. Write in past tense.\n\n"
             f"{summary_text}"
@@ -763,14 +874,22 @@ class DMEngine:
             source_parts.append(f"PREMISE: {campaign.description}")
 
         # Characters
+        is_wod = campaign.game_system == GameSystem.WOD
         if campaign.characters:
             source_parts.append("\nCHARACTERS:")
             for char in campaign.characters.values():
                 if char.creation_complete:
-                    source_parts.append(
-                        f"- {char.name}, {char.race} {char.char_class} (Level {char.level}) "
-                        f"— played by {char.owner_name}"
-                    )
+                    if is_wod:
+                        cov = f", {char.covenant}" if hasattr(char, 'covenant') and char.covenant else ""
+                        source_parts.append(
+                            f"- {char.name}, Clan {char.clan}{cov} "
+                            f"— played by {char.owner_name}"
+                        )
+                    else:
+                        source_parts.append(
+                            f"- {char.name}, {char.race} {char.char_class} (Level {char.level}) "
+                            f"— played by {char.owner_name}"
+                        )
                     if char.backstory:
                         source_parts.append(f"  Backstory: {char.backstory[:300]}")
 
@@ -794,12 +913,19 @@ class DMEngine:
 
         source_text = "\n".join(source_parts)
 
+        if is_wod:
+            genre = "gothic horror author commissioned to write a Vampire: The Requiem chronicle"
+            style = "urban gothic horror novel"
+        else:
+            genre = "fantasy author commissioned to write the tale of a D&D campaign"
+            style = "fantasy novel"
+
         prompt = (
-            "You are a fantasy author commissioned to write the tale of a D&D campaign. "
+            f"You are a {genre}. "
             "Using the source material below, write a polished, engaging narrative retelling "
             "of the entire campaign story.\n\n"
             "GUIDELINES:\n"
-            "- Write in third person, past tense, like a fantasy novel\n"
+            f"- Write in third person, past tense, like a {style}\n"
             "- Include all major plot events, battles, discoveries, and character moments\n"
             "- Give each player character their voice and personality\n"
             "- Include NPC interactions and memorable dialogue\n"
