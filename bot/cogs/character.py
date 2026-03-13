@@ -13,6 +13,7 @@ from bot.data.backgrounds import get_background_names, get_background_data
 from bot.data.rules import (
     ABILITY_NAMES, ABILITY_FULL_NAMES, STANDARD_ARRAY, SKILLS,
     POINT_BUY_COSTS, POINT_BUY_BUDGET, modifier_str, modifier,
+    xp_for_next_level,
 )
 from bot.data.weapons import WEAPONS, CLASS_STARTING_WEAPONS
 from bot.data.spell_lists import (
@@ -57,6 +58,34 @@ NUMBER_EMOJIS = [
 ]
 CONFIRM_EMOJIS = ["✅", "❌"]
 
+# Edit-mode navigation emojis
+NAV_PREV = "\u25c0\ufe0f"   # ◀️
+NAV_NEXT = "\u25b6\ufe0f"   # ▶️
+EDIT_PLUS = "\u2795"         # ➕
+EDIT_MINUS = "\u2796"        # ➖
+EDIT_SAVE = "\u2705"         # ✅
+EDIT_TOGGLE = "\U0001f504"   # 🔄
+EDIT_NAV_EMOJIS = [NAV_PREV, NAV_NEXT, EDIT_PLUS, EDIT_MINUS, EDIT_TOGGLE, EDIT_SAVE]
+
+# Class emojis for flavor
+CLASS_EMOJIS = {
+    "Barbarian": "⚔️", "Bard": "🎵", "Cleric": "⛪", "Druid": "🌿",
+    "Fighter": "🗡️", "Monk": "👊", "Paladin": "🛡️", "Ranger": "🏹",
+    "Rogue": "🗡️", "Sorcerer": "✨", "Warlock": "🔮", "Wizard": "📖",
+}
+
+# Ability emojis
+ABILITY_EMOJIS = {
+    "STR": "💪", "DEX": "🏃", "CON": "❤️", "INT": "🧠", "WIS": "👁️", "CHA": "🗣️",
+}
+
+# Skill grouping by ability for display
+SKILLS_BY_ABILITY = {}
+for _sk, _ab in SKILLS.items():
+    SKILLS_BY_ABILITY.setdefault(_ab, []).append(_sk)
+for _ab in SKILLS_BY_ABILITY:
+    SKILLS_BY_ABILITY[_ab].sort()
+
 
 class CharacterCog(commands.Cog, name="Character"):
     """Commands for character creation and management."""
@@ -71,7 +100,7 @@ class CharacterCog(commands.Cog, name="Character"):
                                     display_options: list[str] = None,
                                     emojis: list[str] = None, expected_step: str = "",
                                     overflow: list[str] = None, allow_custom: bool = False):
-        """Send a prompt with emoji reactions for selection.
+        """Send an embed prompt with emoji reactions for selection.
 
         Adds reactions to the message and starts a background listener.
         When a reaction is clicked, routes the selection through _dispatch_step.
@@ -85,10 +114,15 @@ class CharacterCog(commands.Cog, name="Character"):
             allow_custom: If True, hint that custom text input is accepted.
         """
         if len(options) > 10 or not options:
-            # Too many for emojis — fall back to numbered list
+            # Too many for emojis — fall back to numbered list embed
             display = display_options or options
             opt_list = _format_numbered_list(display)
-            await ctx.send(f"{header}\n{opt_list}\n\nReply with: `!cc <number or name>`")
+            embed = discord.Embed(
+                description=f"{header}\n\n{opt_list}",
+                color=discord.Color.blue(),
+            )
+            embed.set_footer(text="Reply with: !cc <number or name>")
+            await ctx.send(embed=embed)
             return
 
         if emojis is None:
@@ -98,7 +132,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         display = display_options or options
 
-        lines = [header, ""]
+        lines = []
         for emoji, label in zip(emojis, display):
             lines.append(f"{emoji} {label}")
 
@@ -106,12 +140,16 @@ class CharacterCog(commands.Cog, name="Character"):
             lines.append(f"\nAlso available: {', '.join(overflow)}")
             lines.append("*Type `!cc <name>` to select these*")
 
+        footer_text = "React to choose, or type !cc <name>"
         if allow_custom:
-            lines.append("\n*React to choose, or type `!cc <custom value>` for something else*")
-        elif not overflow:
-            lines.append("\n*React to choose, or type `!cc <name>` to select*")
+            footer_text = "React to choose, or type !cc <custom value>"
 
-        msg = await ctx.send("\n".join(lines))
+        embed = discord.Embed(
+            description=f"{header}\n\n" + "\n".join(lines),
+            color=discord.Color.blue(),
+        )
+        embed.set_footer(text=footer_text)
+        msg = await ctx.send(embed=embed)
 
         # Add reactions
         for emoji in emojis:
@@ -382,17 +420,24 @@ class CharacterCog(commands.Cog, name="Character"):
         try:
             level_note = ""
             if campaign.starting_level > 1:
-                level_note = f"\nThis campaign starts at **level {campaign.starting_level}**! Your character will be created at that level.\n"
-            await ctx.author.send(
-                "**Character Creation**\n"
-                "Let's build your character step by step.\n"
-                f"{level_note}\n"
-                "*Tip: Type `!cc restart` at any point to start over.*\n\n"
-                "**Step 1: Name**\n"
-                "What is your character's name?\n"
-                "Reply with: `!cc <name>`\n"
-                "Example: `!cc Thandril`"
+                level_note = f"\n⚔️ This campaign starts at **level {campaign.starting_level}**!\n"
+
+            start_embed = discord.Embed(
+                title="⚔️ Character Creation",
+                description=(
+                    "Let's build your character step by step.\n"
+                    f"{level_note}\n"
+                    "*Tip: Type `!cc restart` at any point to start over.*"
+                ),
+                color=discord.Color.blue(),
             )
+            start_embed.add_field(
+                name="📛 Step 1: Name",
+                value="What is your character's name?\n`!cc <name>`\nExample: `!cc Thandril`",
+                inline=False,
+            )
+            start_embed.set_footer(text="Step 1/12 — Character Creation")
+            await ctx.author.send(embed=start_embed)
             await ctx.send(f"{ctx.author.mention} Check your DMs — character creation has started there!")
         except discord.Forbidden:
             _clear_session(ctx.author.id)
@@ -484,17 +529,20 @@ class CharacterCog(commands.Cog, name="Character"):
 
         level_note = ""
         if starting_level > 1:
-            level_note = f"\nThis campaign starts at **level {starting_level}**!\n"
+            level_note = f"\n⚔️ This campaign starts at **level {starting_level}**!\n"
 
-        await ctx.send(
-            "**Character Creation Restarted!**\n"
-            "Starting over from the beginning.\n"
-            f"{level_note}\n"
-            "**Step 1: Name**\n"
-            "What is your character's name?\n"
-            "Reply with: `!cc <name>`\n"
-            "Example: `!cc Thandril`"
+        embed = discord.Embed(
+            title="🔄 Character Creation Restarted!",
+            description=f"Starting over from the beginning.{level_note}",
+            color=discord.Color.blue(),
         )
+        embed.add_field(
+            name="📛 Step 1: Name",
+            value="What is your character's name?\n`!cc <name>`\nExample: `!cc Thandril`",
+            inline=False,
+        )
+        embed.set_footer(text="Step 1/12 — Character Creation")
+        await ctx.send(embed=embed)
 
     async def _step_name(self, ctx, session, char: Character, choice: str):
         if not choice.strip():
@@ -506,7 +554,7 @@ class CharacterCog(commands.Cog, name="Character"):
 
         await self._send_with_reactions(
             ctx,
-            f"Great, **{char.name}**!\n\n**Step 2: Gender**\nChoose your character's gender:",
+            f"📛 Name: **{char.name}**\n\n**⚧️ Step 2: Gender**\nChoose your character's gender:",
             ["Male", "Female", "Non-binary"],
             emojis=["♂️", "♀️", "⚧️"],
             expected_step="gender",
@@ -527,8 +575,8 @@ class CharacterCog(commands.Cog, name="Character"):
         races = get_race_names()
         await self._send_with_reactions(
             ctx,
-            f"Gender: **{char.gender}**\n\n"
-            f"**Step 3: Race**\n"
+            f"⚧️ Gender: **{char.gender}**\n\n"
+            f"**🧝 Step 3: Race**\n"
             f"Choose your character's race:\n"
             f"Each race grants ability score bonuses, traits, and languages.",
             races,
@@ -628,14 +676,17 @@ class CharacterCog(commands.Cog, name="Character"):
         race_display = char.subrace or char.race
         bonuses = ", ".join(f"{a} +{v}" for a, v in char.racial_bonuses.items())
 
-        msg = (
-            f"**Race: {race_display}**\n"
-            f"Ability Bonuses: {bonuses}\n"
-            f"Speed: {char.speed} ft\n"
-            f"Traits: {', '.join(char.traits[:5])}"
+        race_embed = discord.Embed(
+            title=f"🧝 Race: {race_display}",
+            color=discord.Color.blue(),
         )
-        if len(char.traits) > 5:
-            msg += f" (+{len(char.traits) - 5} more)"
+        race_embed.add_field(name="📊 Ability Bonuses", value=bonuses, inline=True)
+        race_embed.add_field(name="⚡ Speed", value=f"{char.speed} ft", inline=True)
+        trait_display = "\n".join(f"• {t}" for t in char.traits[:6])
+        if len(char.traits) > 6:
+            trait_display += f"\n*...and {len(char.traits) - 6} more*"
+        race_embed.add_field(name="🧬 Traits", value=trait_display, inline=False)
+        await ctx.send(embed=race_embed)
 
         session["step"] = "class"
         _set_session(ctx.author.id, session)
@@ -644,22 +695,23 @@ class CharacterCog(commands.Cog, name="Character"):
         emoji_classes = classes[:10]
         overflow_classes = classes[10:]
 
-        # Build display labels with class details
         display_list = []
         for cls_name in emoji_classes:
             data = CLASSES[cls_name]
+            cls_emoji = CLASS_EMOJIS.get(cls_name, "⚔️")
             primary = data.get("primary_ability", "")
-            display_list.append(f"**{cls_name}** ({primary}) — d{data['hit_die']} HP")
+            display_list.append(f"{cls_emoji} **{cls_name}** ({primary}) — d{data['hit_die']} HP")
 
         overflow_display = []
         for cls_name in overflow_classes:
             data = CLASSES[cls_name]
+            cls_emoji = CLASS_EMOJIS.get(cls_name, "⚔️")
             primary = data.get("primary_ability", "")
-            overflow_display.append(f"{cls_name} ({primary}) — d{data['hit_die']} HP")
+            overflow_display.append(f"{cls_emoji} {cls_name} ({primary}) — d{data['hit_die']} HP")
 
         await self._send_with_reactions(
             ctx,
-            f"{msg}\n\n**Step 4: Class**\nChoose your class:",
+            f"**{CLASS_EMOJIS.get(char.char_class, '⚔️')} Step 4: Class**\nChoose your class:",
             emoji_classes,
             display_options=display_list,
             expected_step="class",
@@ -687,11 +739,12 @@ class CharacterCog(commands.Cog, name="Character"):
         session["step"] = "ability_method"
         _set_session(ctx.author.id, session)
 
+        cls_emoji = CLASS_EMOJIS.get(cls_name, "⚔️")
         await self._send_with_reactions(
             ctx,
-            f"**Class: {cls_name}** (d{cls_data['hit_die']})\n"
+            f"{cls_emoji} **Class: {cls_name}** (d{cls_data['hit_die']})\n"
             f"*{cls_data['description']}*\n\n"
-            f"**Step 5: Ability Scores**\n"
+            f"**📊 Step 5: Ability Scores**\n"
             f"Choose how to generate your ability scores:",
             ["roll", "standard", "point buy"],
             display_options=[
@@ -863,12 +916,22 @@ class CharacterCog(commands.Cog, name="Character"):
         await self._show_point_buy(ctx, session)
 
     async def _show_abilities_and_advance_to_background(self, ctx, session, char: Character):
-        lines = ["**Final Ability Scores** (racial bonuses applied):"]
+        ab_embed = discord.Embed(
+            title="📊 Final Ability Scores",
+            description="*(racial bonuses applied)*",
+            color=discord.Color.green(),
+        )
         for ab in ABILITY_NAMES:
             score = char.abilities[ab]
             bonus = char.racial_bonuses.get(ab, 0)
             bonus_str = f" (+{bonus} racial)" if bonus else ""
-            lines.append(f"  {ABILITY_FULL_NAMES[ab]:14s} **{score}** ({modifier_str(score)}){bonus_str}")
+            emoji = ABILITY_EMOJIS.get(ab, "")
+            ab_embed.add_field(
+                name=f"{emoji} {ABILITY_FULL_NAMES[ab]}",
+                value=f"**{score}** ({modifier_str(score)}){bonus_str}",
+                inline=True,
+            )
+        await ctx.send(embed=ab_embed)
 
         session["step"] = "background"
         _set_session(ctx.author.id, session)
@@ -877,10 +940,9 @@ class CharacterCog(commands.Cog, name="Character"):
         emoji_bgs = backgrounds[:10]
         overflow_bgs = backgrounds[10:]
 
-        await ctx.send("\n".join(lines))
         await self._send_with_reactions(
             ctx,
-            "**Step 6: Background**\n"
+            "**📜 Step 6: Background**\n"
             "Choose your background (grants 2 skill proficiencies):",
             emoji_bgs,
             expected_step="background",
@@ -922,16 +984,25 @@ class CharacterCog(commands.Cog, name="Character"):
         skill_list = _format_numbered_list(available_skills)
         already = ", ".join(char.skill_proficiencies) if char.skill_proficiencies else "None"
 
-        await ctx.send(
-            f"**Background: {bg_name}**\n"
-            f"*{bg_data['description']}*\n"
-            f"Feature: {bg_data['feature']}\n"
-            f"Skills gained: {', '.join(bg_data['skill_proficiencies'])}\n\n"
-            f"**Step 7: Class Skills**\n"
-            f"Already proficient: {already}\n"
-            f"Choose **{num_skills}** from:\n{skill_list}\n\n"
-            f"Reply with numbers: `!cc 1 3` or names: `!cc Athletics Perception`"
+        bg_embed = discord.Embed(
+            title=f"📜 Background: {bg_name}",
+            description=f"*{bg_data['description']}*",
+            color=discord.Color.blue(),
         )
+        bg_embed.add_field(name="⭐ Feature", value=bg_data['feature'], inline=False)
+        bg_embed.add_field(name="📚 Skills Gained", value=", ".join(bg_data['skill_proficiencies']), inline=True)
+        await ctx.send(embed=bg_embed)
+
+        skills_embed = discord.Embed(
+            title=f"📚 Step 7: Class Skills",
+            description=(
+                f"Already proficient: {already}\n"
+                f"Choose **{num_skills}** from:\n\n{skill_list}"
+            ),
+            color=discord.Color.blue(),
+        )
+        skills_embed.set_footer(text="Reply with numbers: !cc 1 3 or names: !cc Athletics Perception")
+        await ctx.send(embed=skills_embed)
 
     async def _step_skills(self, ctx, session, char: Character, choice: str):
         available = session["available_skills"]
@@ -1387,13 +1458,14 @@ class CharacterCog(commands.Cog, name="Character"):
         session["step"] = "confirm"
         _set_session(ctx.author.id, session)
 
-        sheet = char.format_sheet()
-        if len(sheet) > 1600:
-            sheet = sheet[:1600] + "\n..."
+        # Send preview embeds
+        preview_embeds = self._build_sheet_embeds(char)
+        for embed in preview_embeds:
+            await ctx.send(embed=embed)
 
         await self._send_with_reactions(
             ctx,
-            f"**Character Preview:**\n{sheet}\n\nConfirm this character?",
+            "**✅ Confirm this character?**",
             ["yes", "no"],
             display_options=["Confirm — Save this character", "Start Over — Delete and redo"],
             emojis=CONFIRM_EMOJIS,
@@ -1415,19 +1487,33 @@ class CharacterCog(commands.Cog, name="Character"):
             save_campaign(campaign)
             _clear_session(ctx.author.id)
 
-            await ctx.send(
-                f"**{char.name}** has been created and saved!\n"
-                f"Use `!sheet` in the server channel to view your character sheet."
+            cls_emoji = CLASS_EMOJIS.get(char.char_class, "⚔️")
+            saved_embed = discord.Embed(
+                title=f"✅ {char.name} Created!",
+                description=(
+                    f"{cls_emoji} Level {char.level} {char.subrace or char.race} {char.char_class}\n\n"
+                    f"📋 Use `!sheet` in the server channel to view your sheet.\n"
+                    f"✏️ Use `!dndedit` to adjust stats with emojis.\n"
+                    f"🎒 Use `!equipment` to manage inventory.\n"
+                    f"🎲 Use `!roll` to make dice rolls."
+                ),
+                color=discord.Color.green(),
             )
+            await ctx.send(embed=saved_embed)
 
             # Announce in the original guild channel
             try:
                 guild_channel = self.bot.get_channel(int(channel_id))
                 if guild_channel:
-                    await guild_channel.send(
-                        f"**{char.name}** ({char.race} {char.char_class}) has joined the party! "
-                        f"Created by {ctx.author.mention}."
+                    announce_embed = discord.Embed(
+                        title=f"{cls_emoji} New Adventurer Joins!",
+                        description=(
+                            f"**{char.name}** ({char.subrace or char.race} {char.char_class}) "
+                            f"has joined the party!\nCreated by {ctx.author.mention}."
+                        ),
+                        color=discord.Color.blue(),
                     )
+                    await guild_channel.send(embed=announce_embed)
             except Exception:
                 pass  # Don't fail if announcement doesn't work
 
@@ -1784,6 +1870,263 @@ class CharacterCog(commands.Cog, name="Character"):
         save_campaign(campaign)
         await ctx.send(f"**{name}** has been deleted. Use `!createchar` to make a new character.")
 
+    def _build_sheet_embeds(self, char) -> list[discord.Embed]:
+        """Build rich Discord embeds for a D&D character sheet."""
+        embeds = []
+        cls_emoji = CLASS_EMOJIS.get(char.char_class, "⚔️")
+        race_display = char.subrace if char.subrace else char.race
+        gender_str = f" | {char.gender}" if char.gender else ""
+        insp_str = " ✦ Inspired" if char.inspiration else ""
+
+        # ── Header Embed ──
+        desc_lines = [f"{cls_emoji} **Level {char.level} {race_display} {char.char_class}**{gender_str}"]
+        if char.background:
+            desc_lines.append(f"📜 *{char.background}*")
+        if char.draconic_ancestry:
+            desc_lines.append(f"🐉 Draconic Ancestry: {char.draconic_ancestry}")
+
+        header = discord.Embed(
+            title=f"⚔ {char.name}{insp_str}",
+            description="\n".join(desc_lines),
+            color=discord.Color.blue(),
+        )
+
+        # HP bar
+        hp_ratio = max(0, min(char.current_hp / char.max_hp, 1.0)) if char.max_hp > 0 else 0
+        hp_filled = round(hp_ratio * 16)
+        hp_bar = "█" * hp_filled + "░" * (16 - hp_filled)
+        hp_color = "🟢" if hp_ratio > 0.5 else ("🟡" if hp_ratio > 0.25 else "🔴")
+        header.add_field(
+            name=f"❤️ Hit Points {hp_color}",
+            value=f"`{hp_bar}`\n**{char.current_hp}/{char.max_hp}**" +
+                  (f" (+{char.temp_hp} temp)" if char.temp_hp else ""),
+            inline=False,
+        )
+
+        # Core stats row
+        ac_source = ""
+        if isinstance(char.equipped, dict):
+            parts = []
+            if char.equipped.get("armor"):
+                parts.append(char.equipped["armor"])
+            if char.equipped.get("shield"):
+                parts.append("Shield")
+            if parts:
+                ac_source = f" ({', '.join(parts)})"
+
+        core_stats = (
+            f"🛡️ **AC:** {char.ac}{ac_source}\n"
+            f"⚡ **Speed:** {char.speed} ft\n"
+            f"🎲 **Prof:** +{char.proficiency_bonus}\n"
+            f"🎯 **Hit Dice:** {char.hit_dice_remaining}d{char.hit_die}"
+        )
+        header.add_field(name="\u200b", value=core_stats, inline=True)
+
+        xp_info = (
+            f"✨ **XP:** {char.xp}/{xp_for_next_level(char.level)}\n"
+            f"💰 **Gold:** {char.gold} gp"
+        )
+        header.add_field(name="\u200b", value=xp_info, inline=True)
+
+        # Death saves (if applicable)
+        if char.current_hp == 0:
+            ds = char.death_saves
+            ds_str = f"✅ {ds['successes']}/3  ❌ {ds['failures']}/3"
+            header.add_field(name="💀 Death Saves", value=ds_str, inline=False)
+
+        # Conditions
+        if char.conditions:
+            header.add_field(
+                name="⚠️ Conditions",
+                value=", ".join(char.conditions),
+                inline=False,
+            )
+
+        embeds.append(header)
+
+        # ── Ability Scores Embed ──
+        ability_embed = discord.Embed(
+            title="📊 Ability Scores",
+            description="*★ = saving throw proficiency*",
+            color=discord.Color.blue(),
+        )
+        # Two columns: STR/DEX/CON and INT/WIS/CHA
+        for col_abilities in [["STR", "DEX", "CON"], ["INT", "WIS", "CHA"]]:
+            lines = []
+            for ab in col_abilities:
+                emoji = ABILITY_EMOJIS.get(ab, "")
+                score = char.abilities[ab]
+                mod = modifier_str(score)
+                save_mod = char.get_save_modifier(ab)
+                save_str = f"+{save_mod}" if save_mod >= 0 else str(save_mod)
+                prof_mark = " ★" if ab in char.saving_throw_proficiencies else ""
+                lines.append(
+                    f"{emoji} **{ABILITY_FULL_NAMES[ab]}:** {score} ({mod})\n"
+                    f"   Save: {save_str}{prof_mark}"
+                )
+            ability_embed.add_field(
+                name="\u200b",
+                value="\n".join(lines),
+                inline=True,
+            )
+        embeds.append(ability_embed)
+
+        # ── Skills Embed ──
+        skills_embed = discord.Embed(
+            title="📚 Skills",
+            description="*★ = proficient*",
+            color=discord.Color.blue(),
+        )
+        # Group by ability
+        for ab_key, ab_label in [("STR", "💪 Strength"), ("DEX", "🏃 Dexterity"),
+                                   ("CON", "❤️ Constitution"), ("INT", "🧠 Intelligence"),
+                                   ("WIS", "👁️ Wisdom"), ("CHA", "🗣️ Charisma")]:
+            skill_list = SKILLS_BY_ABILITY.get(ab_key, [])
+            if not skill_list:
+                continue
+            lines = []
+            for sk in skill_list:
+                sk_mod = char.get_skill_modifier(sk)
+                mod_s = f"+{sk_mod}" if sk_mod >= 0 else str(sk_mod)
+                mark = "★" if sk in char.skill_proficiencies else "○"
+                if sk in char.skill_proficiencies:
+                    lines.append(f"**{mark} {sk}** {mod_s}")
+                else:
+                    lines.append(f"{mark} {sk} {mod_s}")
+            skills_embed.add_field(name=ab_label, value="\n".join(lines), inline=True)
+
+        # Passive scores
+        passive_perc = 10 + char.get_skill_modifier("Perception")
+        passive_inv = 10 + char.get_skill_modifier("Investigation")
+        skills_embed.add_field(
+            name="👀 Passive Scores",
+            value=f"Perception: **{passive_perc}** | Investigation: **{passive_inv}**",
+            inline=False,
+        )
+        embeds.append(skills_embed)
+
+        # ── Features & Traits Embed ──
+        if char.traits or char.features or char.feats or char.languages or char.modifiers:
+            feat_embed = discord.Embed(
+                title="📜 Traits & Features",
+                color=discord.Color.blue(),
+            )
+            if char.traits:
+                trait_text = "\n".join(f"• {t}" for t in char.traits[:10])
+                feat_embed.add_field(name="🧬 Racial Traits", value=trait_text, inline=False)
+            if char.features:
+                feat_text = "\n".join(f"• {f}" for f in char.features)
+                feat_embed.add_field(name="⭐ Features", value=feat_text, inline=True)
+            if char.feats:
+                feat_embed.add_field(name="🏅 Feats", value=", ".join(char.feats), inline=True)
+            if char.languages:
+                feat_embed.add_field(name="💬 Languages", value=", ".join(char.languages), inline=True)
+            if char.modifiers:
+                mod_strs = []
+                for source, bonuses in char.modifiers.items():
+                    parts = [f"{stat} {'+' if val >= 0 else ''}{val}" for stat, val in bonuses.items()]
+                    mod_strs.append(f"**{source}** ({', '.join(parts)})")
+                feat_embed.add_field(name="🔧 Modifiers", value="\n".join(mod_strs), inline=False)
+            embeds.append(feat_embed)
+
+        # ── Weapons Embed ──
+        if char.weapons:
+            weapons_embed = discord.Embed(
+                title="⚔️ Weapons",
+                color=discord.Color.blue(),
+            )
+            for w in char.weapons:
+                is_finesse = w.get('finesse', False)
+                is_ranged = w.get('category') == 'ranged'
+                ab_mod = char.get_modifier("DEX") if (is_finesse or is_ranged) else char.get_modifier("STR")
+                atk_bonus = ab_mod + char.proficiency_bonus
+                atk_str = f"+{atk_bonus}" if atk_bonus >= 0 else str(atk_bonus)
+                dmg_str = f"+{ab_mod}" if ab_mod >= 0 else str(ab_mod)
+                props = f"\n*{', '.join(w['properties'])}*" if w.get('properties') else ""
+                weapons_embed.add_field(
+                    name=f"⚔️ {w['name']}",
+                    value=f"Attack: **{atk_str}**\nDamage: **{w['damage']}{dmg_str}** {w['damage_type']}{props}",
+                    inline=True,
+                )
+            embeds.append(weapons_embed)
+
+        # ── Spellcasting Embed ──
+        if char.spellcasting_ability:
+            spell_mod = char.get_modifier(char.spellcasting_ability)
+            spell_save = 8 + char.proficiency_bonus + spell_mod
+            spell_atk = char.proficiency_bonus + spell_mod
+            atk_str = f"+{spell_atk}" if spell_atk >= 0 else str(spell_atk)
+
+            spell_embed = discord.Embed(
+                title="🔮 Spellcasting",
+                description=(
+                    f"**Ability:** {char.spellcasting_ability} | "
+                    f"**Save DC:** {spell_save} | "
+                    f"**Attack:** {atk_str}"
+                ),
+                color=discord.Color.purple(),
+            )
+            if char.cantrips:
+                spell_embed.add_field(
+                    name="✨ Cantrips",
+                    value=", ".join(char.cantrips),
+                    inline=False,
+                )
+            if char.spell_slots_max:
+                slot_lines = []
+                for lvl in sorted(char.spell_slots_max, key=lambda x: int(x)):
+                    used = char.spell_slots_used.get(lvl, 0)
+                    total = char.spell_slots_max[lvl]
+                    remaining = total - used
+                    pips = "◆" * remaining + "◇" * used
+                    slot_lines.append(f"**Lv{lvl}:** {pips}")
+                spell_embed.add_field(
+                    name="📊 Spell Slots",
+                    value="\n".join(slot_lines),
+                    inline=True,
+                )
+            if char.prepared_spells:
+                spell_embed.add_field(
+                    name="📖 Prepared",
+                    value=", ".join(char.prepared_spells),
+                    inline=False,
+                )
+            if char.known_spells and char.known_spells != char.prepared_spells:
+                spell_embed.add_field(
+                    name="📚 Known",
+                    value=", ".join(char.known_spells),
+                    inline=False,
+                )
+            embeds.append(spell_embed)
+
+        # ── Inventory Embed ──
+        if char.inventory or char.gold:
+            inv_embed = discord.Embed(
+                title="🎒 Inventory",
+                color=discord.Color.blue(),
+            )
+            if isinstance(char.equipped, dict):
+                equipped_parts = []
+                if char.equipped.get("armor"):
+                    equipped_parts.append(f"🛡️ {char.equipped['armor']}")
+                if char.equipped.get("shield"):
+                    equipped_parts.append("🛡️ Shield")
+                if equipped_parts:
+                    inv_embed.add_field(
+                        name="Equipped",
+                        value="\n".join(equipped_parts),
+                        inline=True,
+                    )
+            if char.inventory:
+                items = [char._format_inv_item(e) for e in char.inventory[:15]]
+                item_text = "\n".join(f"• {item}" for item in items)
+                if len(char.inventory) > 15:
+                    item_text += f"\n*...and {len(char.inventory) - 15} more*"
+                inv_embed.add_field(name="Items", value=item_text, inline=False)
+            embeds.append(inv_embed)
+
+        return embeds
+
     @commands.command(name="sheet")
     async def sheet(self, ctx: commands.Context, member: discord.Member = None):
         """View your character sheet (or another player's).
@@ -1803,16 +2146,221 @@ class CharacterCog(commands.Cog, name="Character"):
                            "You don't have a character. Use `!createchar` to make one.")
             return
 
-        sheet = char.format_sheet()
-        # Split if too long
-        while len(sheet) > 1990:
-            split_at = sheet.rfind("\n", 0, 1990)
-            if split_at == -1:
-                split_at = 1990
-            await ctx.send(sheet[:split_at])
-            sheet = sheet[split_at:].lstrip("\n")
-        if sheet:
-            await ctx.send(sheet)
+        embeds = self._build_sheet_embeds(char)
+        for embed in embeds:
+            await ctx.send(embed=embed)
+
+    # ------------------------------------------------------------------
+    # Interactive sheet editor (!dndedit)
+    # ------------------------------------------------------------------
+
+    def _build_edit_pages(self, char):
+        """Build the list of editor pages for a D&D character."""
+        pages = [
+            {
+                "title": "📊 Ability Scores",
+                "items": list(ABILITY_NAMES),
+                "kind": "abilities",
+                "display_fn": lambda c, name: (
+                    f"{c.abilities[name]} ({modifier_str(c.abilities[name])})"
+                ),
+            },
+            {
+                "title": "💪 STR / 🏃 DEX Skills",
+                "items": SKILLS_BY_ABILITY.get("STR", []) + SKILLS_BY_ABILITY.get("DEX", []),
+                "kind": "skills",
+                "display_fn": lambda c, name: (
+                    f"{'★' if name in c.skill_proficiencies else '○'} "
+                    f"{'+' if c.get_skill_modifier(name) >= 0 else ''}{c.get_skill_modifier(name)}"
+                ),
+            },
+            {
+                "title": "🧠 INT / 👁️ WIS Skills",
+                "items": SKILLS_BY_ABILITY.get("INT", []) + SKILLS_BY_ABILITY.get("WIS", []),
+                "kind": "skills",
+                "display_fn": lambda c, name: (
+                    f"{'★' if name in c.skill_proficiencies else '○'} "
+                    f"{'+' if c.get_skill_modifier(name) >= 0 else ''}{c.get_skill_modifier(name)}"
+                ),
+            },
+            {
+                "title": "🗣️ CHA Skills",
+                "items": SKILLS_BY_ABILITY.get("CHA", []),
+                "kind": "skills",
+                "display_fn": lambda c, name: (
+                    f"{'★' if name in c.skill_proficiencies else '○'} "
+                    f"{'+' if c.get_skill_modifier(name) >= 0 else ''}{c.get_skill_modifier(name)}"
+                ),
+            },
+        ]
+        return pages
+
+    def _build_edit_embed(self, char, pages, page_idx: int, cursor: int) -> discord.Embed:
+        """Build the embed for the current editor page."""
+        page = pages[page_idx]
+        items = page["items"]
+        kind = page["kind"]
+        display_fn = page["display_fn"]
+
+        embed = discord.Embed(
+            title=f"✏️ Editing: {char.name}",
+            description=f"**{page['title']}**\nPage {page_idx + 1}/{len(pages)}",
+            color=discord.Color.gold(),
+        )
+
+        lines = []
+        for i, name in enumerate(items):
+            display_label = ABILITY_FULL_NAMES.get(name, name)
+            emoji = ABILITY_EMOJIS.get(name, "")
+            val_str = display_fn(char, name)
+            pointer = "▸ " if i == cursor else "  "
+            num = NUMBER_EMOJIS[i] if i < len(NUMBER_EMOJIS) else f"{i + 1}."
+            lines.append(f"{pointer}{num} {emoji} **{display_label}:** {val_str}")
+
+        embed.add_field(name="\u200b", value="\n".join(lines), inline=False)
+
+        # Controls legend — different for abilities vs skills
+        if kind == "abilities":
+            embed.set_footer(
+                text="◀️▶️ Page │ 1️⃣-🔟 Select │ ➕➖ Score ±1 │ ✅ Save"
+            )
+        else:
+            embed.set_footer(
+                text="◀️▶️ Page │ 1️⃣-🔟 Select │ 🔄 Toggle Proficiency │ ✅ Save"
+            )
+        return embed
+
+    @commands.command(name="dndedit", aliases=["dedit", "editchar"])
+    async def dnd_edit(self, ctx: commands.Context):
+        """Interactively edit your D&D character with emoji reactions.
+
+        Navigate pages with ◀️▶️, select items with number emojis.
+        For abilities: ➕➖ to adjust scores.
+        For skills: 🔄 to toggle proficiency.
+        Press ✅ to save and exit.
+
+        Usage: !dndedit
+        """
+        campaign = self._get_campaign(ctx)
+        if not campaign:
+            return await ctx.send("No campaign in this channel.")
+        if campaign.game_system == GameSystem.WOD:
+            return await ctx.send("This is a WoD campaign — use `!wodedit` instead.")
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createchar` to create one.")
+        if not char.creation_complete:
+            return await ctx.send("Finish character creation first with `!cc`.")
+
+        pages = self._build_edit_pages(char)
+        page_idx = 0
+        cursor = 0
+
+        embed = self._build_edit_embed(char, pages, page_idx, cursor)
+        msg = await ctx.send(embed=embed)
+
+        # Add control reactions
+        all_emojis = NUMBER_EMOJIS[:len(pages[page_idx]["items"])] + EDIT_NAV_EMOJIS
+        for emoji in all_emojis:
+            try:
+                await msg.add_reaction(emoji)
+            except discord.HTTPException:
+                pass
+
+        changed = False
+        timeout_seconds = 180.0
+
+        while True:
+            def check(reaction, user):
+                return (
+                    user.id == ctx.author.id
+                    and reaction.message.id == msg.id
+                    and str(reaction.emoji) in (
+                        NUMBER_EMOJIS[:len(pages[page_idx]["items"])] + EDIT_NAV_EMOJIS
+                    )
+                )
+
+            try:
+                reaction, user = await self.bot.wait_for(
+                    "reaction_add", timeout=timeout_seconds, check=check
+                )
+            except asyncio.TimeoutError:
+                if changed:
+                    char.calc_ac()
+                    char.update_proficiency()
+                    save_campaign(campaign)
+                embed = self._build_edit_embed(char, pages, page_idx, cursor)
+                embed.set_footer(text="⏰ Editor timed out. Changes saved." if changed else "⏰ Editor timed out.")
+                try:
+                    await msg.edit(embed=embed)
+                except discord.HTTPException:
+                    pass
+                return
+
+            emoji_str = str(reaction.emoji)
+
+            try:
+                await msg.remove_reaction(reaction.emoji, user)
+            except discord.HTTPException:
+                pass
+
+            page = pages[page_idx]
+            items = page["items"]
+            kind = page["kind"]
+
+            if emoji_str == EDIT_SAVE:
+                if changed:
+                    char.calc_ac()
+                    char.update_proficiency()
+                    save_campaign(campaign)
+                embed = self._build_edit_embed(char, pages, page_idx, cursor)
+                embed.color = discord.Color.green()
+                embed.set_footer(text="✅ Changes saved!" if changed else "✅ No changes made.")
+                try:
+                    await msg.edit(embed=embed)
+                    await msg.clear_reactions()
+                except discord.HTTPException:
+                    pass
+                return
+
+            elif emoji_str == NAV_PREV:
+                page_idx = (page_idx - 1) % len(pages)
+                cursor = 0
+
+            elif emoji_str == NAV_NEXT:
+                page_idx = (page_idx + 1) % len(pages)
+                cursor = 0
+
+            elif emoji_str == EDIT_PLUS and kind == "abilities":
+                ab = items[cursor]
+                if char.abilities[ab] < 30:
+                    char.abilities[ab] += 1
+                    changed = True
+
+            elif emoji_str == EDIT_MINUS and kind == "abilities":
+                ab = items[cursor]
+                if char.abilities[ab] > 1:
+                    char.abilities[ab] -= 1
+                    changed = True
+
+            elif emoji_str == EDIT_TOGGLE and kind == "skills":
+                skill = items[cursor]
+                if skill in char.skill_proficiencies:
+                    char.skill_proficiencies.remove(skill)
+                else:
+                    char.skill_proficiencies.append(skill)
+                changed = True
+
+            elif emoji_str in NUMBER_EMOJIS:
+                idx = NUMBER_EMOJIS.index(emoji_str)
+                if idx < len(items):
+                    cursor = idx
+
+            embed = self._build_edit_embed(char, pages, page_idx, cursor)
+            try:
+                await msg.edit(embed=embed)
+            except discord.HTTPException:
+                pass
 
     def _resolve_choice(self, choice: str, options: list[str]) -> str | None:
         """Resolve a user choice by number or partial name match."""

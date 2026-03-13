@@ -2,15 +2,29 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.4"
+__version__ = "1.8.5"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 4
+    'patch': 5
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.5** - March 13, 2026
+- D&D character sheet (!sheet) now uses rich Discord embeds
+- Embed sections: Header/HP, Ability Scores, Skills, Traits/Features, Weapons, Spellcasting, Inventory
+- Visual HP bar with color indicators (🟢🟡🔴)
+- Skills grouped by ability with proficiency marks (★/○)
+- Class emojis (⚔️🎵⛪🌿🗡️👊🛡️🏹✨🔮📖) and ability emojis throughout
+- D&D character creation flow upgraded to embed-based prompts
+- Race summary, ability scores, background, and confirmation all use rich embeds
+- New !dndedit command for interactive emoji-based character editing
+- Ability Scores page: ➕/➖ to adjust scores
+- Skills pages: 🔄 to toggle proficiency on/off
+- ◀️▶️ to navigate pages, ✅ to save
+- Announcement embed when new character joins the party
+
 **Version 1.8.4** - March 13, 2026
 - New !wodedit command for interactive emoji-based character sheet editing
 - Navigate pages with ◀️▶️ (Attributes, Skills, Disciplines, Merits)
