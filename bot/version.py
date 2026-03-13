@@ -2,15 +2,28 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.1** - March 13, 2026
+- Overhauled WoD character creation UX with rich Discord embeds
+- Added emoji icons for clans, covenants, virtues, vices, and all steps
+- Visual progress bar shows creation completion percentage
+- Filled/empty dot displays for attributes, skills, disciplines, and merits
+- Category emojis (🧠 Mental, 💪 Physical, 🗣️ Social) throughout
+- Clearer instructions with examples at every step
+- Descriptions for virtues and vices explaining what they mean
+- Playstyle hints for each vampire clan
+- Discipline previews show Level 1 and Level 2 powers
+- Merit categories displayed in organized embeds with icons
+- Richer announcement embed when a new character joins the coterie
+
 **Version 1.8.0** - March 13, 2026
 - World of Darkness (Vampire: The Masquerade) game system support
 - WoD character creation with clans, disciplines, and merits

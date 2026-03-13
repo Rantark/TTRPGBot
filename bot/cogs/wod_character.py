@@ -14,6 +14,7 @@ from bot.models.wod_character import (
 from bot.models.campaign import CampaignPhase, GameSystem
 from bot.data.wod_clans import (
     CLANS, COVENANTS, VIRTUES, VICES,
+    VIRTUE_DATA, VICE_DATA,
     get_clan_names, get_clan_data, get_covenant_names,
 )
 from bot.data.wod_disciplines import get_clan_disciplines, get_discipline_data
@@ -37,18 +38,99 @@ def _clear_session(user_id):
     _wod_creation_sessions.pop(str(user_id), None)
 
 
-def _format_numbered_list(items: list[str]) -> str:
-    lines = []
-    for i, item in enumerate(items, 1):
-        lines.append(f"`{i:2d}.` {item}")
-    return "\n".join(lines)
-
-
+# ── Emoji constants ──
 NUMBER_EMOJIS = [
     "1\u20e3", "2\u20e3", "3\u20e3", "4\u20e3", "5\u20e3",
     "6\u20e3", "7\u20e3", "8\u20e3", "9\u20e3", "\U0001f51f"
 ]
 CONFIRM_EMOJIS = ["\u2705", "\u274c"]
+
+# Step emojis for the progress bar
+STEP_EMOJIS = {
+    "name": "\U0001f4db",          # 📛
+    "gender": "\u26a7\ufe0f",      # ⚧️
+    "concept": "\U0001f4a1",       # 💡
+    "clan": "\U0001f9db",          # 🧛
+    "covenant": "\U0001f3db\ufe0f",  # 🏛️
+    "virtue": "\u2728",            # ✨
+    "vice": "\U0001f608",          # 😈
+    "attributes": "\U0001f4aa",    # 💪
+    "skills": "\U0001f4da",        # 📚
+    "specialties": "\U0001f3af",   # 🎯
+    "disciplines": "\U0001fa78",   # 🩸
+    "merits": "\u2b50",            # ⭐
+    "backstory": "\U0001f4d6",     # 📖
+    "confirm": "\u2705",           # ✅
+}
+
+# Category emojis
+CAT_EMOJIS = {
+    "Mental": "\U0001f9e0",    # 🧠
+    "Physical": "\U0001f4aa",  # 💪
+    "Social": "\U0001f5e3\ufe0f",  # 🗣️
+}
+
+# Merit category emojis
+MERIT_CAT_EMOJIS = {
+    "Physical": "\U0001f3cb\ufe0f",  # 🏋️
+    "Mental": "\U0001f9e0",          # 🧠
+    "Social": "\U0001f465",          # 👥
+    "Vampire": "\U0001f9db",         # 🧛
+}
+
+# Creation step order for progress tracking
+CREATION_STEPS = [
+    "name", "gender", "concept", "clan", "covenant",
+    "virtue", "vice", "attributes", "skills",
+    "specialties", "disciplines", "merits", "backstory", "confirm",
+]
+
+# Map internal step names to progress steps
+STEP_TO_PROGRESS = {
+    "name": "name", "gender": "gender", "concept": "concept",
+    "clan": "clan", "covenant": "covenant", "virtue": "virtue", "vice": "vice",
+    "attr_priority": "attributes", "attr_assign_primary": "attributes",
+    "attr_assign_secondary": "attributes", "attr_assign_tertiary": "attributes",
+    "skill_priority": "skills", "skill_assign_primary": "skills",
+    "skill_assign_secondary": "skills", "skill_assign_tertiary": "skills",
+    "specialties": "specialties", "disciplines": "disciplines",
+    "merits": "merits", "backstory": "backstory", "confirm": "confirm",
+}
+
+
+def _progress_bar(current_step: str) -> str:
+    """Generate a visual progress bar for character creation."""
+    progress_step = STEP_TO_PROGRESS.get(current_step, current_step)
+    try:
+        idx = CREATION_STEPS.index(progress_step)
+    except ValueError:
+        idx = 0
+
+    total = len(CREATION_STEPS)
+    filled = idx
+    pct = int((filled / total) * 100)
+
+    bar_len = 14
+    filled_blocks = int((filled / total) * bar_len)
+    bar = "\u2593" * filled_blocks + "\u2591" * (bar_len - filled_blocks)
+
+    return f"`[{bar}]` {pct}% \u2014 Step {idx + 1}/{total}"
+
+
+def _dot_display(current: int, maximum: int = 5) -> str:
+    """Render dots as filled/empty circles."""
+    return "\u25cf" * current + "\u25cb" * (maximum - current)
+
+
+def _make_embed(title: str, description: str = "", color: discord.Color = None,
+                step: str = None) -> discord.Embed:
+    """Create a styled embed with optional progress footer."""
+    if color is None:
+        color = discord.Color.dark_red()
+    embed = discord.Embed(title=title, description=description, color=color)
+    if step:
+        embed.set_footer(text=_progress_bar(step))
+    return embed
 
 
 class WoDCharacterCog(commands.Cog, name="WoD Character"):
@@ -63,14 +145,14 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
     def _is_wod_campaign(self, campaign) -> bool:
         return campaign and campaign.game_system == GameSystem.WOD
 
-    async def _send_with_reactions(self, ctx, header: str, options: list[str],
-                                    display_options: list[str] = None,
-                                    emojis: list[str] = None, expected_step: str = ""):
-        """Send a prompt with emoji reactions for selection."""
+    async def _send_with_reactions(self, ctx, embed: discord.Embed,
+                                    options: list[str],
+                                    emojis: list[str] = None,
+                                    expected_step: str = ""):
+        """Send an embed with emoji reactions for selection."""
         if len(options) > 10 or not options:
-            display = display_options or options
-            opt_list = _format_numbered_list(display)
-            await ctx.send(f"{header}\n{opt_list}\n\nReply with: `!wcc <number or name>`")
+            # Fall back to text list
+            await ctx.send(embed=embed)
             return
 
         if emojis is None:
@@ -78,14 +160,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         else:
             emojis = emojis[:len(options)]
 
-        display = display_options or options
-
-        lines = [header, ""]
-        for emoji, label in zip(emojis, display):
-            lines.append(f"{emoji} {label}")
-        lines.append("\n*React to choose, or type `!wcc <name>` to select*")
-
-        msg = await ctx.send("\n".join(lines))
+        msg = await ctx.send(embed=embed)
 
         for emoji in emojis:
             try:
@@ -192,14 +267,14 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 char.vitae = max(0, min(char.vitae_max, char.vitae + delta))
                 save_campaign(campaign)
                 await ctx.send(
-                    f"**{char.name}** Vitae: {old} -> {char.vitae}/{char.vitae_max}"
+                    f"\U0001fa78 **{char.name}** Vitae: {old} \u2192 {char.vitae}/{char.vitae_max}"
                 )
             except ValueError:
                 await ctx.send("Usage: `!vitae +3` or `!vitae -2`")
         else:
-            pips = "O" * char.vitae + "." * (char.vitae_max - char.vitae)
+            pips = _dot_display(char.vitae, char.vitae_max)
             await ctx.send(
-                f"**{char.name}** — Vitae: {char.vitae}/{char.vitae_max} [{pips}] "
+                f"\U0001fa78 **{char.name}** \u2014 Vitae: {char.vitae}/{char.vitae_max} [{pips}] "
                 f"({char.vitae_per_turn}/turn)"
             )
 
@@ -212,8 +287,8 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char = campaign.get_character(str(ctx.author.id))
         if not char:
             return await ctx.send("You don't have a character.")
-        dots = "O" * char.humanity + "." * (10 - char.humanity)
-        await ctx.send(f"**{char.name}** — Humanity: {char.humanity}/10 [{dots}]")
+        dots = _dot_display(char.humanity, 10)
+        await ctx.send(f"\u2728 **{char.name}** \u2014 Humanity: {char.humanity}/10 [{dots}]")
 
     @commands.command(name="willpower", aliases=["wp"])
     async def quick_willpower(self, ctx: commands.Context, *, amount: str = ""):
@@ -236,14 +311,14 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 char.willpower_current = max(0, min(char.willpower_max, char.willpower_current + delta))
                 save_campaign(campaign)
                 await ctx.send(
-                    f"**{char.name}** Willpower: {old} -> {char.willpower_current}/{char.willpower_max}"
+                    f"\U0001f4a0 **{char.name}** Willpower: {old} \u2192 {char.willpower_current}/{char.willpower_max}"
                 )
             except ValueError:
                 await ctx.send("Usage: `!willpower -1` or `!willpower +1`")
         else:
-            pips = "O" * char.willpower_current + "." * (char.willpower_max - char.willpower_current)
+            pips = _dot_display(char.willpower_current, char.willpower_max)
             await ctx.send(
-                f"**{char.name}** — Willpower: {char.willpower_current}/{char.willpower_max} [{pips}]"
+                f"\U0001f4a0 **{char.name}** \u2014 Willpower: {char.willpower_current}/{char.willpower_max} [{pips}]"
             )
 
     # ------------------------------------------------------------------
@@ -285,20 +360,30 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         _set_session(ctx.author.id, session)
 
         try:
-            await ctx.author.send(
-                "**World of Darkness — Character Creation**\n"
-                "*Vampire: The Requiem*\n\n"
-                "Let's build your Kindred step by step.\n"
-                "*Tip: Type `!wcc restart` at any point to start over.*\n\n"
-                "**Step 1: Name**\n"
-                "What is your character's name?\n"
-                "Reply with: `!wcc <name>`\n"
-                "Example: `!wcc Marcus Ashton`"
+            embed = _make_embed(
+                "\U0001f9db Vampire: The Requiem \u2014 Character Creation",
+                (
+                    "Welcome to the World of Darkness! Let's build your Kindred, "
+                    "step by step.\n\n"
+                    "You'll choose your name, clan, covenant, attributes, skills, "
+                    "and more. Each step has clear instructions.\n\n"
+                    "\U0001f4cb **How it works:**\n"
+                    "\u2022 React to emoji buttons **or** type `!wcc <choice>`\n"
+                    "\u2022 Type `!wcc restart` at any point to start over\n"
+                    "\u2022 Take your time \u2014 there's no rush!\n"
+                    "\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+                    f"{STEP_EMOJIS['name']} **Step 1 of 14: Character Name**\n"
+                    "What is your character's name?\n\n"
+                    "Type: `!wcc <name>`\n"
+                    "*Example:* `!wcc Marcus Ashton`"
+                ),
+                step="name",
             )
-            await ctx.send(f"{ctx.author.mention} Check your DMs — WoD character creation has started!")
+            await ctx.author.send(embed=embed)
+            await ctx.send(f"\U0001f9db {ctx.author.mention} Check your DMs \u2014 character creation has started!")
         except discord.Forbidden:
             _clear_session(ctx.author.id)
-            await ctx.send("I can't DM you! Please enable DMs from server members.")
+            await ctx.send("\u274c I can't DM you! Please enable DMs from server members.")
 
     @commands.command(name="wcc")
     async def wod_creation_choice(self, ctx: commands.Context, *, choice: str = ""):
@@ -325,12 +410,17 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             char = WoDCharacter(session["char"].owner_id, session["char"].owner_name)
             session["char"] = char
             _set_session(ctx.author.id, session)
-            await ctx.send(
-                "**Restarting character creation.**\n\n"
-                "**Step 1: Name**\n"
-                "What is your character's name?\n"
-                "Reply with: `!wcc <name>`"
+            embed = _make_embed(
+                "\U0001f504 Restarting Character Creation",
+                (
+                    f"{STEP_EMOJIS['name']} **Step 1 of 14: Character Name**\n"
+                    "What is your character's name?\n\n"
+                    "Type: `!wcc <name>`\n"
+                    "*Example:* `!wcc Marcus Ashton`"
+                ),
+                step="name",
             )
+            await ctx.send(embed=embed)
             return
 
         await self._dispatch_step(ctx, choice)
@@ -343,9 +433,21 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.name = choice.strip()[:50]
         session["step"] = "gender"
         _set_session(ctx.author.id, session)
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['gender']} Step 2 of 14: Gender",
+            (
+                f"\U0001f44d **{char.name}** \u2014 great name!\n\n"
+                "Choose your character's gender:\n\n"
+                "\u2642\ufe0f **Male**\n"
+                "\u2640\ufe0f **Female**\n"
+                "\u26a7\ufe0f **Non-Binary**\n\n"
+                "*React below or type `!wcc Male/Female/Non-Binary`*"
+            ),
+            step="gender",
+        )
         await self._send_with_reactions(
-            ctx,
-            f"**{char.name}** — great name.\n\n**Step 2: Gender**\nChoose your character's gender:",
+            ctx, embed,
             ["Male", "Female", "Non-Binary"],
             emojis=["\u2642\ufe0f", "\u2640\ufe0f", "\u26a7\ufe0f"],
             expected_step="gender",
@@ -355,12 +457,22 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.gender = choice.strip()[:30]
         session["step"] = "concept"
         _set_session(ctx.author.id, session)
-        await ctx.send(
-            "**Step 3: Concept**\n"
-            "A one-line concept that defines your character.\n"
-            "Examples: *Jaded detective*, *Ambitious socialite*, *Underground fight club owner*\n\n"
-            "Reply with: `!wcc <concept>`"
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['concept']} Step 3 of 14: Character Concept",
+            (
+                "A **concept** is a one-line summary of who your character is.\n"
+                "Think of it as their elevator pitch \u2014 what defined them in life?\n\n"
+                "\U0001f4a1 **Examples:**\n"
+                "\u2022 *Jaded detective who trusts no one*\n"
+                "\u2022 *Ambitious socialite chasing power*\n"
+                "\u2022 *Underground fight club owner*\n"
+                "\u2022 *Disgraced surgeon seeking redemption*\n\n"
+                "Type: `!wcc <your concept>`"
+            ),
+            step="concept",
         )
+        await ctx.send(embed=embed)
 
     async def _step_concept(self, ctx, session, char: WoDCharacter, choice: str):
         char.concept = choice.strip()[:100]
@@ -368,22 +480,39 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         _set_session(ctx.author.id, session)
 
         clan_names = get_clan_names()
-        display = []
-        for name in clan_names:
+        clan_emojis = []
+        lines = [
+            "Your **clan** determines your vampiric bloodline, supernatural powers "
+            "(Disciplines), and your curse.\n"
+        ]
+
+        for i, name in enumerate(clan_names):
             data = get_clan_data(name)
+            emoji = data.get("emoji", NUMBER_EMOJIS[i])
+            clan_emojis.append(emoji)
             disc = ", ".join(data["clan_disciplines"])
-            display.append(f"**{name}** ({data['nickname']}) — {disc}")
+            lines.append(
+                f"{emoji} **{name}** \u2014 *\"{data['nickname']}\"*\n"
+                f"> {data['description'][:120]}\n"
+                f"> \U0001fa78 Disciplines: `{disc}`\n"
+                f"> \U0001f3ae Playstyle: *{data.get('playstyle', '')}*\n"
+            )
+
+        lines.append("*React below or type `!wcc <clan name>`*")
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['clan']} Step 4 of 14: Choose Your Clan",
+            "\n".join(lines),
+            step="clan",
+        )
 
         await self._send_with_reactions(
-            ctx,
-            "**Step 4: Clan**\nChoose your vampire clan:",
-            clan_names,
-            display_options=display,
+            ctx, embed, clan_names,
+            emojis=clan_emojis,
             expected_step="clan",
         )
 
     async def _step_clan(self, ctx, session, char: WoDCharacter, choice: str):
-        # Accept number or name
         clan_names = get_clan_names()
         try:
             idx = int(choice) - 1
@@ -392,7 +521,6 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         except ValueError:
             pass
 
-        # Fuzzy match
         match = None
         for name in clan_names:
             if name.lower() == choice.strip().lower():
@@ -404,26 +532,69 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                     match = name
                     break
         if not match:
-            await ctx.send(f"Unknown clan. Choose from: {', '.join(clan_names)}")
+            await ctx.send(f"\u274c Unknown clan. Choose from: {', '.join(clan_names)}")
             return
 
         char.clan = match
         clan_data = get_clan_data(match)
 
+        # Show clan confirmation embed
+        clan_embed = discord.Embed(
+            title=f"{clan_data['emoji']} Clan {match} \u2014 *\"{clan_data['nickname']}\"*",
+            description=clan_data['description'],
+            color=discord.Color.dark_red(),
+        )
+        clan_embed.add_field(
+            name="\U0001fa78 Clan Disciplines",
+            value=", ".join(clan_data['clan_disciplines']),
+            inline=True,
+        )
+        clan_embed.add_field(
+            name="\U0001f4aa Favored Attributes",
+            value=", ".join(clan_data['favored_attributes']),
+            inline=True,
+        )
+        clan_embed.add_field(
+            name="\u26a0\ufe0f Clan Weakness",
+            value=clan_data['clan_weakness'],
+            inline=False,
+        )
+        await ctx.send(embed=clan_embed)
+
+        # Now show covenant selection
         session["step"] = "covenant"
         _set_session(ctx.author.id, session)
 
-        await ctx.send(f"You are now a **{match}** — *{clan_data['nickname']}*\n{clan_data['description']}")
-
         cov_names = get_covenant_names()
-        display = [f"**{name}**" for name in cov_names]
-        display.append("**Unaligned** (no covenant)")
+        cov_emojis = []
+        lines = [
+            "Your **covenant** is your political and philosophical faction in vampire society. "
+            "You can also go unaligned.\n"
+        ]
+
+        for name in cov_names:
+            data = COVENANTS[name]
+            emoji = data.get("emoji", "\u2b1b")
+            cov_emojis.append(emoji)
+            special = f"\n> \U0001f52e *{data['special']}*" if data.get("special") else ""
+            lines.append(
+                f"{emoji} **{name}**\n"
+                f"> {data['description'][:150]}{special}\n"
+            )
+
+        cov_emojis.append("\U0001f6b6")  # 🚶 for Unaligned
+        lines.append("\U0001f6b6 **Unaligned** \u2014 *No covenant allegiance*\n")
+        lines.append("*React below or type `!wcc <covenant name>`*")
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['covenant']} Step 5 of 14: Choose Your Covenant",
+            "\n".join(lines),
+            step="covenant",
+        )
 
         await self._send_with_reactions(
-            ctx,
-            "\n**Step 5: Covenant**\nChoose your covenant (or go unaligned):",
-            cov_names + ["Unaligned"],
-            display_options=display,
+            ctx, embed, cov_names + ["Unaligned"],
+            emojis=cov_emojis,
             expected_step="covenant",
         )
 
@@ -447,7 +618,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                     match = name
                     break
         if not match:
-            await ctx.send(f"Unknown covenant. Choose from: {', '.join(cov_names)}")
+            await ctx.send(f"\u274c Unknown covenant. Choose from: {', '.join(cov_names)}")
             return
 
         char.covenant = match if match != "Unaligned" else ""
@@ -455,10 +626,31 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["step"] = "virtue"
         _set_session(ctx.author.id, session)
 
+        # Virtue selection with descriptions
+        virtue_emojis = []
+        lines = [
+            "Your **Virtue** represents your character's highest moral aspiration. "
+            "When you act according to your Virtue in a meaningful way, you regain "
+            "**all spent Willpower**.\n"
+        ]
+
+        for v in VIRTUES:
+            vdata = VIRTUE_DATA.get(v, {})
+            emoji = vdata.get("emoji", "\u2728")
+            virtue_emojis.append(emoji)
+            lines.append(f"{emoji} **{v}** \u2014 {vdata.get('description', '')}")
+
+        lines.append("\n*React below or type `!wcc <virtue name>`*")
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['virtue']} Step 6 of 14: Choose Your Virtue",
+            "\n".join(lines),
+            step="virtue",
+        )
+
         await self._send_with_reactions(
-            ctx,
-            "**Step 6: Virtue**\nChoose your character's guiding Virtue:",
-            VIRTUES,
+            ctx, embed, VIRTUES,
+            emojis=virtue_emojis,
             expected_step="virtue",
         )
 
@@ -471,17 +663,38 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             pass
         choice = choice.strip().title()
         if choice not in VIRTUES:
-            await ctx.send(f"Choose from: {', '.join(VIRTUES)}")
+            await ctx.send(f"\u274c Choose from: {', '.join(VIRTUES)}")
             return
 
         char.virtue = choice
         session["step"] = "vice"
         _set_session(ctx.author.id, session)
 
+        # Vice selection with descriptions
+        vice_emojis = []
+        lines = [
+            "Your **Vice** represents your character's greatest moral failing. "
+            "When you indulge your Vice, you regain **1 Willpower**. "
+            "It's the easy temptation that always calls.\n"
+        ]
+
+        for v in VICES:
+            vdata = VICE_DATA.get(v, {})
+            emoji = vdata.get("emoji", "\U0001f608")
+            vice_emojis.append(emoji)
+            lines.append(f"{emoji} **{v}** \u2014 {vdata.get('description', '')}")
+
+        lines.append("\n*React below or type `!wcc <vice name>`*")
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['vice']} Step 7 of 14: Choose Your Vice",
+            "\n".join(lines),
+            step="vice",
+        )
+
         await self._send_with_reactions(
-            ctx,
-            "**Step 7: Vice**\nChoose your character's Vice:",
-            VICES,
+            ctx, embed, VICES,
+            emojis=vice_emojis,
             expected_step="vice",
         )
 
@@ -494,30 +707,40 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             pass
         choice = choice.strip().title()
         if choice not in VICES:
-            await ctx.send(f"Choose from: {', '.join(VICES)}")
+            await ctx.send(f"\u274c Choose from: {', '.join(VICES)}")
             return
 
         char.vice = choice
         session["step"] = "attr_priority"
         _set_session(ctx.author.id, session)
 
-        await ctx.send(
-            "**Step 8: Attributes**\n"
-            "In WoD, you prioritize three categories: **Mental**, **Physical**, **Social**.\n"
-            "- **Primary:** 5 dots to distribute (one attribute starts at 1, you add 5)\n"
-            "- **Secondary:** 4 dots to distribute\n"
-            "- **Tertiary:** 3 dots to distribute\n"
-            "(All attributes start at 1)\n\n"
-            "Choose your **PRIMARY** category first:"
+        embed = _make_embed(
+            f"{STEP_EMOJIS['attributes']} Step 8 of 14: Attributes",
+            (
+                "Attributes represent your character's raw capabilities.\n"
+                "All attributes start at **1 dot**. You'll prioritize three categories "
+                "and distribute bonus dots:\n\n"
+                "\U0001f947 **Primary** \u2014 5 bonus dots *(your strongest area)*\n"
+                "\U0001f948 **Secondary** \u2014 4 bonus dots\n"
+                "\U0001f949 **Tertiary** \u2014 3 bonus dots *(your weakest area)*\n\n"
+                "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+                "**Choose your PRIMARY (strongest) category:**\n\n"
+                f"{CAT_EMOJIS['Mental']} **Mental** \u2014 Intelligence, Wits, Resolve\n"
+                f"> *Thinking, reacting, staying focused*\n"
+                f"{CAT_EMOJIS['Physical']} **Physical** \u2014 Strength, Dexterity, Stamina\n"
+                f"> *Raw power, agility, endurance*\n"
+                f"{CAT_EMOJIS['Social']} **Social** \u2014 Presence, Manipulation, Composure\n"
+                f"> *Charisma, persuasion, keeping cool*\n\n"
+                "*React below or type `!wcc Mental/Physical/Social`*"
+            ),
+            step="attr_priority",
         )
+
+        cat_emojis = [CAT_EMOJIS["Mental"], CAT_EMOJIS["Physical"], CAT_EMOJIS["Social"]]
         await self._send_with_reactions(
-            ctx, "",
+            ctx, embed,
             ["Mental", "Physical", "Social"],
-            display_options=[
-                f"**Mental** (Intelligence, Wits, Resolve)",
-                f"**Physical** (Strength, Dexterity, Stamina)",
-                f"**Social** (Presence, Manipulation, Composure)",
-            ],
+            emojis=cat_emojis,
             expected_step="attr_priority",
         )
 
@@ -535,7 +758,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         remaining = [v for v in valid if v not in priorities]
         if choice not in remaining:
-            await ctx.send(f"Choose from: {', '.join(remaining)}")
+            await ctx.send(f"\u274c Choose from: {', '.join(remaining)}")
             return
 
         priorities.append(choice)
@@ -544,32 +767,50 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         if len(priorities) == 1:
             _set_session(ctx.author.id, session)
             remaining = [v for v in valid if v not in priorities]
+            cat_emojis = [CAT_EMOJIS[r] for r in remaining]
+
+            embed = _make_embed(
+                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 Priority",
+                (
+                    f"\U0001f947 Primary: **{priorities[0]}** (5 dots)\n\n"
+                    f"Now choose your **SECONDARY** category:\n\n"
+                    + "\n".join(f"{CAT_EMOJIS[r]} **{r}**" for r in remaining)
+                    + "\n\n*React or type `!wcc <category>`*"
+                ),
+                step="attr_priority",
+            )
             await self._send_with_reactions(
-                ctx,
-                f"Primary: **{priorities[0]}** (5 dots)\n\nChoose your **SECONDARY** category:",
-                remaining,
-                display_options=[f"**{r}**" for r in remaining],
+                ctx, embed, remaining,
+                emojis=cat_emojis,
                 expected_step="attr_priority",
             )
         elif len(priorities) == 2:
             tertiary = [v for v in valid if v not in priorities][0]
             priorities.append(tertiary)
             session["attr_priorities"] = priorities
-            # Now assign primary attributes
             session["step"] = "attr_assign_primary"
             session["attr_dots_remaining"] = 5
             session["attr_current_category"] = priorities[0]
             _set_session(ctx.author.id, session)
 
-            await ctx.send(
-                f"Priorities set: **{priorities[0]}** (5) > **{priorities[1]}** (4) > **{priorities[2]}** (3)\n\n"
-                f"Now distribute **5 dots** among your {priorities[0]} attributes.\n"
-                f"All start at 1. Max 5 each. Assign dots with:\n"
-                f"`!wcc <Attribute> <dots>`\n"
-                f"Example: `!wcc Intelligence 3` (sets Intelligence to 1+3=4)\n\n"
-                f"**{priorities[0]} Attributes:** {', '.join(self._get_attrs_for_category(priorities[0]))}\n"
-                f"Dots remaining: **5**"
+            attrs = self._get_attrs_for_category(priorities[0])
+            embed = _make_embed(
+                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 {priorities[0]}",
+                (
+                    f"\U0001f947 **{priorities[0]}** (5 dots) > "
+                    f"\U0001f948 **{priorities[1]}** (4 dots) > "
+                    f"\U0001f949 **{priorities[2]}** (3 dots)\n\n"
+                    f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+                    f"{CAT_EMOJIS[priorities[0]]} Distribute **5 dots** among your **{priorities[0]}** attributes.\n"
+                    f"All start at 1. You're adding bonus dots on top (max 4 bonus = 5 total).\n\n"
+                    + "\n".join(f"\u2022 **{a}**: {_dot_display(1, 5)}" for a in attrs)
+                    + f"\n\n\U0001f4ac **How to assign:** `!wcc <Attribute> <dots>`\n"
+                    f"*Example:* `!wcc Intelligence 3` *(sets it to 1+3 = 4)*\n\n"
+                    f"\U0001f4b0 Dots remaining: **5**"
+                ),
+                step="attr_assign_primary",
             )
+            await ctx.send(embed=embed)
 
     def _get_attrs_for_category(self, category: str) -> list[str]:
         if category == "Mental":
@@ -595,65 +836,64 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         attrs = self._get_attrs_for_category(category)
         remaining = session["attr_dots_remaining"]
 
-        # Parse "AttributeName dots" or "done"
         choice = choice.strip()
         if choice.lower() == "done":
             if remaining > 0:
-                await ctx.send(f"You still have **{remaining}** dots to assign!")
+                await ctx.send(f"\u26a0\ufe0f You still have **{remaining}** dots to assign!")
                 return
-            # Move to next category
             await self._advance_attr_category(ctx, session, char)
             return
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("Format: `!wcc <Attribute> <dots>` — e.g., `!wcc Strength 3`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Attribute> <dots>` \u2014 e.g., `!wcc Strength 3`")
             return
 
         attr_name = parts[0].strip()
         try:
             dots = int(parts[1])
         except ValueError:
-            await ctx.send("Format: `!wcc <Attribute> <dots>` — dots must be a number.")
+            await ctx.send("\U0001f4ac Format: `!wcc <Attribute> <dots>` \u2014 dots must be a number.")
             return
 
-        # Match attribute name
         match = None
         for a in attrs:
             if a.lower() == attr_name.lower() or a.lower().startswith(attr_name.lower()):
                 match = a
                 break
         if not match:
-            await ctx.send(f"Unknown attribute. Choose from: {', '.join(attrs)}")
+            await ctx.send(f"\u274c Unknown attribute. Choose from: {', '.join(attrs)}")
             return
 
-        # Validate
-        already_assigned = char.attributes[match] - 1  # subtract base 1
-        available = remaining + already_assigned  # give back any previously assigned
-        if dots < 0 or dots > 4:  # max +4 (base 1 + 4 = 5)
-            await ctx.send("Dots must be 0-4 (attributes range 1-5, start at 1).")
+        already_assigned = char.attributes[match] - 1
+        available = remaining + already_assigned
+        if dots < 0 or dots > 4:
+            await ctx.send("\u274c Bonus dots must be 0\u20134 (attributes range 1\u20135, start at 1).")
             return
         if dots > available:
-            await ctx.send(f"Not enough dots. You have {remaining} remaining (this attribute has {already_assigned} assigned).")
+            await ctx.send(f"\u274c Not enough dots. You have **{remaining}** remaining (this attribute has {already_assigned} assigned).")
             return
 
-        # Apply
         session["attr_dots_remaining"] = remaining + already_assigned - dots
         char.attributes[match] = 1 + dots
         _set_session(ctx.author.id, session)
 
-        # Show status
-        lines = [f"**{match}** set to **{char.attributes[match]}**"]
-        lines.append(f"\n**{category} Attributes:**")
+        # Show status embed
+        lines = [f"\u2705 **{match}** set to **{char.attributes[match]}**\n"]
+        lines.append(f"{CAT_EMOJIS[category]} **{category} Attributes:**")
         for a in attrs:
-            dot_str = "O" * char.attributes[a] + "." * (5 - char.attributes[a])
-            lines.append(f"  {a}: {dot_str} ({char.attributes[a]})")
-        lines.append(f"\nDots remaining: **{session['attr_dots_remaining']}**")
+            lines.append(f"\u2022 {a}: {_dot_display(char.attributes[a], 5)} **({char.attributes[a]})**")
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{session['attr_dots_remaining']}**")
 
         if session["attr_dots_remaining"] == 0:
-            lines.append("\nAll dots assigned! Type `!wcc done` to continue, or adjust with `!wcc <Attr> <dots>`.")
+            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue, or adjust any attribute.")
 
-        await ctx.send("\n".join(lines))
+        embed = _make_embed(
+            f"{STEP_EMOJIS['attributes']} Attributes \u2014 {category}",
+            "\n".join(lines),
+            step=session["step"],
+        )
+        await ctx.send(embed=embed)
 
     async def _advance_attr_category(self, ctx, session, char: WoDCharacter):
         """Move to the next attribute category or to skills."""
@@ -666,46 +906,62 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             session["attr_current_category"] = priorities[1]
             _set_session(ctx.author.id, session)
             attrs = self._get_attrs_for_category(priorities[1])
-            await ctx.send(
-                f"**{priorities[1]} Attributes** — distribute **4 dots**:\n"
-                f"Attributes: {', '.join(attrs)}\n"
-                f"Dots remaining: **4**\n\n"
-                f"`!wcc <Attribute> <dots>` — then `!wcc done` when finished."
+            embed = _make_embed(
+                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 {priorities[1]}",
+                (
+                    f"{CAT_EMOJIS[priorities[1]]} Distribute **4 dots** among your **{priorities[1]}** attributes:\n\n"
+                    + "\n".join(f"\u2022 **{a}**: {_dot_display(1, 5)}" for a in attrs)
+                    + f"\n\n\U0001f4ac `!wcc <Attribute> <dots>` \u2014 then `!wcc done` when finished.\n"
+                    f"\U0001f4b0 Dots remaining: **4**"
+                ),
+                step="attr_assign_secondary",
             )
+            await ctx.send(embed=embed)
         elif step == "attr_assign_secondary":
             session["step"] = "attr_assign_tertiary"
             session["attr_dots_remaining"] = 3
             session["attr_current_category"] = priorities[2]
             _set_session(ctx.author.id, session)
             attrs = self._get_attrs_for_category(priorities[2])
-            await ctx.send(
-                f"**{priorities[2]} Attributes** — distribute **3 dots**:\n"
-                f"Attributes: {', '.join(attrs)}\n"
-                f"Dots remaining: **3**\n\n"
-                f"`!wcc <Attribute> <dots>` — then `!wcc done` when finished."
+            embed = _make_embed(
+                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 {priorities[2]}",
+                (
+                    f"{CAT_EMOJIS[priorities[2]]} Distribute **3 dots** among your **{priorities[2]}** attributes:\n\n"
+                    + "\n".join(f"\u2022 **{a}**: {_dot_display(1, 5)}" for a in attrs)
+                    + f"\n\n\U0001f4ac `!wcc <Attribute> <dots>` \u2014 then `!wcc done` when finished.\n"
+                    f"\U0001f4b0 Dots remaining: **3**"
+                ),
+                step="attr_assign_tertiary",
             )
+            await ctx.send(embed=embed)
         elif step == "attr_assign_tertiary":
             # Attributes done — move to skills
             session["step"] = "skill_priority"
             _set_session(ctx.author.id, session)
-            await ctx.send(
-                "Attributes complete!\n\n"
-                "**Step 9: Skills**\n"
-                "Prioritize skill categories just like attributes:\n"
-                "- **Primary:** 11 dots\n"
-                "- **Secondary:** 7 dots\n"
-                "- **Tertiary:** 4 dots\n"
-                "(Skills start at 0. Max 5, but during creation max 3.)\n\n"
-                "Choose your **PRIMARY** skill category:"
+
+            embed = _make_embed(
+                f"{STEP_EMOJIS['skills']} Step 9 of 14: Skills",
+                (
+                    "\u2705 **Attributes complete!**\n\n"
+                    "Skills represent trained abilities. Same priority system:\n\n"
+                    "\U0001f947 **Primary** \u2014 11 dots *(your area of expertise)*\n"
+                    "\U0001f948 **Secondary** \u2014 7 dots\n"
+                    "\U0001f949 **Tertiary** \u2014 4 dots\n\n"
+                    "Skills start at **0** and cap at **3** during creation.\n\n"
+                    "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+                    "**Choose your PRIMARY skill category:**\n\n"
+                    f"{CAT_EMOJIS['Mental']} **Mental** \u2014 Academics, Computer, Investigation...\n"
+                    f"{CAT_EMOJIS['Physical']} **Physical** \u2014 Athletics, Brawl, Firearms...\n"
+                    f"{CAT_EMOJIS['Social']} **Social** \u2014 Empathy, Expression, Persuasion...\n\n"
+                    "*React below or type `!wcc Mental/Physical/Social`*"
+                ),
+                step="skill_priority",
             )
+            cat_emojis = [CAT_EMOJIS["Mental"], CAT_EMOJIS["Physical"], CAT_EMOJIS["Social"]]
             await self._send_with_reactions(
-                ctx, "",
+                ctx, embed,
                 ["Mental", "Physical", "Social"],
-                display_options=[
-                    f"**Mental** ({', '.join(WOD_MENTAL_SKILLS[:4])}...)",
-                    f"**Physical** ({', '.join(WOD_PHYSICAL_SKILLS[:4])}...)",
-                    f"**Social** ({', '.join(WOD_SOCIAL_SKILLS[:4])}...)",
-                ],
+                emojis=cat_emojis,
                 expected_step="skill_priority",
             )
 
@@ -723,7 +979,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         remaining = [v for v in valid if v not in priorities]
         if choice not in remaining:
-            await ctx.send(f"Choose from: {', '.join(remaining)}")
+            await ctx.send(f"\u274c Choose from: {', '.join(remaining)}")
             return
 
         priorities.append(choice)
@@ -732,11 +988,21 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         if len(priorities) == 1:
             _set_session(ctx.author.id, session)
             remaining = [v for v in valid if v not in priorities]
+            cat_emojis = [CAT_EMOJIS[r] for r in remaining]
+
+            embed = _make_embed(
+                f"{STEP_EMOJIS['skills']} Step 9: Skills \u2014 Priority",
+                (
+                    f"\U0001f947 Primary: **{priorities[0]}** (11 dots)\n\n"
+                    f"Choose your **SECONDARY** category:\n\n"
+                    + "\n".join(f"{CAT_EMOJIS[r]} **{r}**" for r in remaining)
+                    + "\n\n*React or type `!wcc <category>`*"
+                ),
+                step="skill_priority",
+            )
             await self._send_with_reactions(
-                ctx,
-                f"Primary: **{priorities[0]}** (11 dots)\n\nChoose your **SECONDARY** category:",
-                remaining,
-                display_options=[f"**{r}**" for r in remaining],
+                ctx, embed, remaining,
+                emojis=cat_emojis,
                 expected_step="skill_priority",
             )
         elif len(priorities) == 2:
@@ -744,19 +1010,27 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             priorities.append(tertiary)
             session["skill_priorities"] = priorities
             session["step"] = "skill_assign_primary"
-            dots_map = {0: 11, 1: 7, 2: 4}
-            session["skill_dots_remaining"] = dots_map[0]
+            session["skill_dots_remaining"] = 11
             session["skill_current_category"] = priorities[0]
             _set_session(ctx.author.id, session)
 
             skills = self._get_skills_for_category(priorities[0])
-            await ctx.send(
-                f"Priorities: **{priorities[0]}** (11) > **{priorities[1]}** (7) > **{priorities[2]}** (4)\n\n"
-                f"Distribute **11 dots** among {priorities[0]} skills (max 3 each at creation):\n"
-                f"Skills: {', '.join(skills)}\n\n"
-                f"`!wcc <Skill> <dots>` — then `!wcc done` when finished.\n"
-                f"Dots remaining: **11**"
+            skill_list = "\n".join(f"\u2022 {s}" for s in skills)
+            embed = _make_embed(
+                f"{STEP_EMOJIS['skills']} Step 9: Skills \u2014 {priorities[0]}",
+                (
+                    f"\U0001f947 **{priorities[0]}** (11) > "
+                    f"\U0001f948 **{priorities[1]}** (7) > "
+                    f"\U0001f949 **{priorities[2]}** (4)\n\n"
+                    f"{CAT_EMOJIS[priorities[0]]} Distribute **11 dots** among **{priorities[0]}** skills (max 3 each):\n\n"
+                    f"{skill_list}\n\n"
+                    f"\U0001f4ac `!wcc <Skill> <dots>` \u2014 then `!wcc done` when finished.\n"
+                    f"*Example:* `!wcc Athletics 3`\n\n"
+                    f"\U0001f4b0 Dots remaining: **11**"
+                ),
+                step="skill_assign_primary",
             )
+            await ctx.send(embed=embed)
 
     async def _step_skill_assign(self, ctx, session, char: WoDCharacter, choice: str):
         """Handle skill dot assignment for current category."""
@@ -767,64 +1041,66 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         choice = choice.strip()
         if choice.lower() == "done":
             if remaining > 0:
-                await ctx.send(f"You still have **{remaining}** dots to assign!")
+                await ctx.send(f"\u26a0\ufe0f You still have **{remaining}** dots to assign!")
                 return
             await self._advance_skill_category(ctx, session, char)
             return
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("Format: `!wcc <Skill> <dots>` — e.g., `!wcc Athletics 3`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Skill> <dots>` \u2014 e.g., `!wcc Athletics 3`")
             return
 
         skill_name = parts[0].strip()
         try:
             dots = int(parts[1])
         except ValueError:
-            await ctx.send("Format: `!wcc <Skill> <dots>` — dots must be a number.")
+            await ctx.send("\U0001f4ac Format: `!wcc <Skill> <dots>` \u2014 dots must be a number.")
             return
 
-        # Match skill name
         match = None
         for s in skills:
             if s.lower() == skill_name.lower() or s.lower().startswith(skill_name.lower()):
                 match = s
                 break
-        # Also try "Animal Ken" as "animal"
         if not match:
             for s in skills:
                 if skill_name.lower() in s.lower():
                     match = s
                     break
         if not match:
-            await ctx.send(f"Unknown skill. Choose from: {', '.join(skills)}")
+            await ctx.send(f"\u274c Unknown skill. Choose from: {', '.join(skills)}")
             return
 
         already_assigned = char.skills.get(match, 0)
         available = remaining + already_assigned
         if dots < 0 or dots > 3:
-            await ctx.send("Dots must be 0-3 during character creation.")
+            await ctx.send("\u274c Dots must be 0\u20133 during character creation.")
             return
         if dots > available:
-            await ctx.send(f"Not enough dots. You have {remaining} remaining.")
+            await ctx.send(f"\u274c Not enough dots. You have **{remaining}** remaining.")
             return
 
         session["skill_dots_remaining"] = remaining + already_assigned - dots
         char.skills[match] = dots
         _set_session(ctx.author.id, session)
 
-        lines = [f"**{match}** set to **{dots}**"]
-        lines.append(f"\n**{category} Skills:**")
+        lines = [f"\u2705 **{match}** set to **{dots}**\n"]
+        lines.append(f"{CAT_EMOJIS[category]} **{category} Skills:**")
         for s in skills:
             v = char.skills.get(s, 0)
-            dot_str = ("O" * v + "." * (3 - v)) if v > 0 else "..."
-            lines.append(f"  {s}: {dot_str} ({v})")
-        lines.append(f"\nDots remaining: **{session['skill_dots_remaining']}**")
+            lines.append(f"\u2022 {s}: {_dot_display(v, 3)} **({v})**")
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{session['skill_dots_remaining']}**")
 
         if session["skill_dots_remaining"] == 0:
-            lines.append("\nAll dots assigned! Type `!wcc done` to continue.")
+            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue.")
 
-        await ctx.send("\n".join(lines))
+        embed = _make_embed(
+            f"{STEP_EMOJIS['skills']} Skills \u2014 {category}",
+            "\n".join(lines),
+            step=session["step"],
+        )
+        await ctx.send(embed=embed)
 
     async def _advance_skill_category(self, ctx, session, char: WoDCharacter):
         """Move to next skill category or to specialties."""
@@ -846,33 +1122,51 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
             skills = self._get_skills_for_category(priorities[idx])
             dots = session["skill_dots_remaining"]
-            await ctx.send(
-                f"**{priorities[idx]} Skills** — distribute **{dots} dots** (max 3 each):\n"
-                f"Skills: {', '.join(skills)}\n"
-                f"Dots remaining: **{dots}**\n\n"
-                f"`!wcc <Skill> <dots>` — then `!wcc done` when finished."
+            skill_list = "\n".join(f"\u2022 {s}" for s in skills)
+            embed = _make_embed(
+                f"{STEP_EMOJIS['skills']} Step 9: Skills \u2014 {priorities[idx]}",
+                (
+                    f"{CAT_EMOJIS[priorities[idx]]} Distribute **{dots} dots** among **{priorities[idx]}** skills (max 3 each):\n\n"
+                    f"{skill_list}\n\n"
+                    f"\U0001f4ac `!wcc <Skill> <dots>` \u2014 then `!wcc done` when finished.\n"
+                    f"\U0001f4b0 Dots remaining: **{dots}**"
+                ),
+                step=next_s,
             )
+            await ctx.send(embed=embed)
         else:
             # Skills done — move to specialties
             session["step"] = "specialties"
             session["specialties_remaining"] = 3
             _set_session(ctx.author.id, session)
-            await ctx.send(
-                "Skills complete!\n\n"
-                "**Step 10: Specialties**\n"
-                "Choose **3 skill specialties** — a narrow focus within a skill you have.\n"
-                "Format: `!wcc <Skill>: <Specialty>`\n"
-                "Example: `!wcc Firearms: Pistols`\n"
-                "Example: `!wcc Academics: History`\n\n"
-                f"Specialties remaining: **3**"
+
+            embed = _make_embed(
+                f"{STEP_EMOJIS['specialties']} Step 10 of 14: Specialties",
+                (
+                    "\u2705 **Skills complete!**\n\n"
+                    "Specialties represent a narrow focus within a skill. "
+                    "They give you a **+1 bonus** when that specialty applies.\n"
+                    "You get **3 specialties** to assign.\n\n"
+                    "\U0001f4ac **Format:** `!wcc <Skill>: <Specialty>`\n\n"
+                    "\U0001f4a1 **Examples:**\n"
+                    "\u2022 `!wcc Firearms: Pistols`\n"
+                    "\u2022 `!wcc Academics: History`\n"
+                    "\u2022 `!wcc Persuasion: Seduction`\n"
+                    "\u2022 `!wcc Athletics: Climbing`\n\n"
+                    "*You should pick skills your character already has dots in!*\n"
+                    "*Type `!wcc skip` to skip remaining specialties.*\n\n"
+                    f"\U0001f3af Specialties remaining: **3**"
+                ),
+                step="specialties",
             )
+            await ctx.send(embed=embed)
 
     async def _step_specialties(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("specialties_remaining", 3)
 
         if choice.strip().lower() == "done":
             if remaining > 0:
-                await ctx.send(f"You still have **{remaining}** specialties to assign. Use `!wcc skip` to skip.")
+                await ctx.send(f"\u26a0\ufe0f You still have **{remaining}** specialties to assign. Use `!wcc skip` to skip.")
                 return
             await self._advance_to_disciplines(ctx, session, char)
             return
@@ -882,7 +1176,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             return
 
         if ":" not in choice:
-            await ctx.send("Format: `!wcc <Skill>: <Specialty>` — e.g., `!wcc Firearms: Pistols`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Skill>: <Specialty>` \u2014 e.g., `!wcc Firearms: Pistols`")
             return
 
         parts = choice.split(":", 1)
@@ -890,10 +1184,9 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         specialty = parts[1].strip()
 
         if not specialty:
-            await ctx.send("Please provide a specialty name after the colon.")
+            await ctx.send("\u274c Please provide a specialty name after the colon.")
             return
 
-        # Match skill
         match = None
         for s in WOD_ALL_SKILLS:
             if s.lower() == skill_name.lower() or s.lower().startswith(skill_name.lower()):
@@ -905,7 +1198,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                     match = s
                     break
         if not match:
-            await ctx.send(f"Unknown skill: {skill_name}")
+            await ctx.send(f"\u274c Unknown skill: {skill_name}")
             return
 
         if match not in char.specialties:
@@ -915,11 +1208,21 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         _set_session(ctx.author.id, session)
 
         rem = session["specialties_remaining"]
-        await ctx.send(
-            f"Added specialty: **{match}: {specialty}**\n"
-            f"Specialties remaining: **{rem}**" +
-            ("\nType `!wcc done` to continue." if rem == 0 else "")
+        embed = _make_embed(
+            f"{STEP_EMOJIS['specialties']} Specialties",
+            (
+                f"\u2705 Added: **{match}: {specialty}**\n\n"
+                "\U0001f4cb **Current specialties:**\n"
+                + "\n".join(
+                    f"\u2022 {sk}: {', '.join(sp)}"
+                    for sk, sp in char.specialties.items()
+                )
+                + f"\n\n\U0001f3af Specialties remaining: **{rem}**"
+                + ("\n\nType `!wcc done` to continue." if rem == 0 else "")
+            ),
+            step="specialties",
         )
+        await ctx.send(embed=embed)
 
         if rem == 0:
             await self._advance_to_disciplines(ctx, session, char)
@@ -932,22 +1235,35 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["clan_disciplines"] = clan_discs
         _set_session(ctx.author.id, session)
 
-        disc_display = []
+        clan_data = get_clan_data(char.clan)
+        clan_emoji = clan_data.get("emoji", "\U0001f9db") if clan_data else "\U0001f9db"
+
+        disc_lines = []
         for d in clan_discs:
             data = get_discipline_data(d)
             if data:
                 p1 = data["powers"].get(1, {})
-                disc_display.append(f"**{d}** — {data['description']}\n  Level 1: {p1.get('name', '?')}: {p1.get('description', '')}")
+                p2 = data["powers"].get(2, {})
+                disc_lines.append(
+                    f"\U0001fa78 **{d}** \u2014 *{data['description']}*\n"
+                    f"> \u25cf **Lvl 1:** {p1.get('name', '?')} \u2014 {p1.get('description', '')}\n"
+                    f"> \u25cb **Lvl 2:** {p2.get('name', '?')} \u2014 {p2.get('description', '')}"
+                )
 
-        await ctx.send(
-            "**Step 11: Disciplines**\n"
-            f"As a **{char.clan}**, your clan disciplines are:\n\n"
-            + "\n".join(disc_display) + "\n\n"
-            "Distribute **3 dots** among your clan disciplines (max 2 per discipline at creation).\n"
-            "Format: `!wcc <Discipline> <dots>`\n"
-            "Example: `!wcc Celerity 2`\n\n"
-            f"Dots remaining: **3**"
+        embed = _make_embed(
+            f"{STEP_EMOJIS['disciplines']} Step 11 of 14: Disciplines",
+            (
+                f"{clan_emoji} As a **{char.clan}**, your clan disciplines are:\n\n"
+                + "\n\n".join(disc_lines) + "\n\n"
+                "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
+                "Distribute **3 dots** (max **2** per discipline at creation).\n\n"
+                "\U0001f4ac `!wcc <Discipline> <dots>`\n"
+                "*Example:* `!wcc Celerity 2`\n\n"
+                "\U0001f4b0 Dots remaining: **3**"
+            ),
+            step="disciplines",
         )
+        await ctx.send(embed=embed)
 
     async def _step_disciplines(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("discipline_dots_remaining", 3)
@@ -955,40 +1271,39 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         if choice.strip().lower() == "done":
             if remaining > 0:
-                await ctx.send(f"You still have **{remaining}** dots to assign!")
+                await ctx.send(f"\u26a0\ufe0f You still have **{remaining}** dots to assign!")
                 return
             await self._advance_to_merits(ctx, session, char)
             return
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("Format: `!wcc <Discipline> <dots>` — e.g., `!wcc Celerity 2`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Discipline> <dots>` \u2014 e.g., `!wcc Celerity 2`")
             return
 
         disc_name = parts[0].strip()
         try:
             dots = int(parts[1])
         except ValueError:
-            await ctx.send("Dots must be a number.")
+            await ctx.send("\u274c Dots must be a number.")
             return
 
-        # Match discipline
         match = None
         for d in clan_discs:
             if d.lower() == disc_name.lower() or d.lower().startswith(disc_name.lower()):
                 match = d
                 break
         if not match:
-            await ctx.send(f"Choose from your clan disciplines: {', '.join(clan_discs)}")
+            await ctx.send(f"\u274c Choose from your clan disciplines: {', '.join(clan_discs)}")
             return
 
         already = char.disciplines.get(match, 0)
         available = remaining + already
         if dots < 0 or dots > 2:
-            await ctx.send("Max 2 dots per discipline at character creation.")
+            await ctx.send("\u274c Max 2 dots per discipline at character creation.")
             return
         if dots > available:
-            await ctx.send(f"Not enough dots. You have {remaining} remaining.")
+            await ctx.send(f"\u274c Not enough dots. You have **{remaining}** remaining.")
             return
 
         session["discipline_dots_remaining"] = remaining + already - dots
@@ -998,17 +1313,22 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             del char.disciplines[match]
         _set_session(ctx.author.id, session)
 
-        lines = [f"**{match}** set to **{dots}**"]
+        lines = [f"\u2705 **{match}** set to **{dots}**\n"]
+        lines.append("\U0001fa78 **Clan Disciplines:**")
         for d in clan_discs:
             v = char.disciplines.get(d, 0)
-            dot_str = "O" * v + "." * (2 - v)
-            lines.append(f"  {d}: {dot_str} ({v})")
-        lines.append(f"\nDots remaining: **{session['discipline_dots_remaining']}**")
+            lines.append(f"\u2022 {d}: {_dot_display(v, 2)} **({v})**")
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{session['discipline_dots_remaining']}**")
 
         if session["discipline_dots_remaining"] == 0:
-            lines.append("\nType `!wcc done` to continue.")
+            lines.append("\n\u2705 Type `!wcc done` to continue.")
 
-        await ctx.send("\n".join(lines))
+        embed = _make_embed(
+            f"{STEP_EMOJIS['disciplines']} Disciplines",
+            "\n".join(lines),
+            step="disciplines",
+        )
+        await ctx.send(embed=embed)
 
     async def _advance_to_merits(self, ctx, session, char: WoDCharacter):
         """Move to merit selection."""
@@ -1016,33 +1336,45 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["merit_dots_remaining"] = MERIT_DOTS_AT_CREATION
         _set_session(ctx.author.id, session)
 
-        # Show available merits
         categories = ["Physical", "Mental", "Social", "Vampire"]
-        lines = [
-            "**Step 12: Merits**\n"
-            f"You have **{MERIT_DOTS_AT_CREATION} dots** to spend on merits.\n"
-        ]
+        embeds = []
+
+        # Intro embed
+        intro_embed = _make_embed(
+            f"{STEP_EMOJIS['merits']} Step 12 of 14: Merits",
+            (
+                "Merits represent special advantages, backgrounds, and resources.\n"
+                f"You have **{MERIT_DOTS_AT_CREATION} dots** to spend.\n\n"
+                "\U0001f4ac `!wcc <Merit> <dots>` \u2014 e.g., `!wcc Resources 3`\n"
+                "Type `!wcc done` when finished (unspent dots are lost).\n"
+            ),
+            step="merits",
+        )
+        await ctx.send(embed=intro_embed)
+
+        # Category embeds
         for cat in categories:
             cat_merits = {k: v for k, v in MERITS.items() if v["category"] == cat}
-            if cat_merits:
-                lines.append(f"**{cat}:**")
-                for name, data in sorted(cat_merits.items()):
-                    dot_options = "/".join(str(d) for d in data["dots"])
-                    lines.append(f"  {name} ({dot_options}) — {data['description'][:60]}")
+            if not cat_merits:
+                continue
 
-        lines.append(
-            f"\nFormat: `!wcc <Merit> <dots>`\n"
-            f"Example: `!wcc Resources 3`\n"
-            f"Type `!wcc done` when finished (unspent dots are lost)."
-        )
-        # Split if too long
-        text = "\n".join(lines)
-        while len(text) > 1900:
-            split_at = text.rfind("\n", 0, 1900)
-            await ctx.send(text[:split_at])
-            text = text[split_at:].lstrip("\n")
-        if text:
-            await ctx.send(text)
+            cat_emoji = MERIT_CAT_EMOJIS.get(cat, "\u2b50")
+            lines = []
+            for name, data in sorted(cat_merits.items()):
+                dot_options = "/".join(str(d) for d in data["dots"])
+                lines.append(f"\u2022 **{name}** `({dot_options})` \u2014 {data['description']}")
+
+            embed = discord.Embed(
+                title=f"{cat_emoji} {cat} Merits",
+                description="\n".join(lines),
+                color=discord.Color.dark_gold(),
+            )
+            embeds.append(embed)
+
+        for embed in embeds:
+            await ctx.send(embed=embed)
+
+        await ctx.send(f"\U0001f4b0 Merit dots remaining: **{MERIT_DOTS_AT_CREATION}**")
 
     async def _step_merits(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("merit_dots_remaining", 7)
@@ -1053,17 +1385,16 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("Format: `!wcc <Merit> <dots>` — e.g., `!wcc Resources 3`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Merit> <dots>` \u2014 e.g., `!wcc Resources 3`")
             return
 
         merit_name = parts[0].strip()
         try:
             dots = int(parts[1])
         except ValueError:
-            await ctx.send("Dots must be a number.")
+            await ctx.send("\u274c Dots must be a number.")
             return
 
-        # Match merit
         all_merits = get_merit_names()
         match = None
         for m in all_merits:
@@ -1081,50 +1412,63 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                     match = m
                     break
         if not match:
-            await ctx.send(f"Unknown merit: {merit_name}. Type `!wcc done` to skip merits.")
+            await ctx.send(f"\u274c Unknown merit: {merit_name}. Type `!wcc done` to skip merits.")
             return
 
         merit_data = MERITS[match]
         if dots not in merit_data["dots"]:
             valid = ", ".join(str(d) for d in merit_data["dots"])
-            await ctx.send(f"{match} can only be taken at: {valid} dots.")
+            await ctx.send(f"\u274c **{match}** can only be taken at: **{valid}** dots.")
             return
 
         already = char.merits.get(match, 0)
         cost = dots - already
         if cost > remaining:
-            await ctx.send(f"Not enough dots. You have {remaining} remaining, need {cost}.")
+            await ctx.send(f"\u274c Not enough dots. You have **{remaining}** remaining, need **{cost}**.")
             return
 
         char.merits[match] = dots
         session["merit_dots_remaining"] = remaining - cost
         _set_session(ctx.author.id, session)
 
-        await ctx.send(
-            f"**{match}** set to **{dots}** dots.\n"
-            f"Merit dots remaining: **{session['merit_dots_remaining']}**\n"
-            f"Current merits: {', '.join(f'{k} {v}' for k, v in char.merits.items())}\n"
-            f"Type `!wcc done` when finished."
+        merit_list = "\n".join(f"\u2022 {k}: {_dot_display(v, 5)} **({v})**" for k, v in char.merits.items())
+        embed = _make_embed(
+            f"{STEP_EMOJIS['merits']} Merits",
+            (
+                f"\u2705 **{match}** set to **{dots}** dots.\n\n"
+                "\u2b50 **Current Merits:**\n"
+                f"{merit_list}\n\n"
+                f"\U0001f4b0 Dots remaining: **{session['merit_dots_remaining']}**\n"
+                "Type `!wcc done` when finished."
+            ),
+            step="merits",
         )
+        await ctx.send(embed=embed)
 
     async def _advance_to_backstory(self, ctx, session, char: WoDCharacter):
         session["step"] = "backstory"
         _set_session(ctx.author.id, session)
-        await ctx.send(
-            "**Step 13: Backstory**\n"
-            "Write a brief backstory for your character. Include:\n"
-            "- Who they were as a mortal\n"
-            "- How they were Embraced (turned into a vampire)\n"
-            "- What drives them in their Requiem (undead existence)\n\n"
-            "Reply with: `!wcc <backstory>`\n"
-            "(Or `!wcc skip` to skip for now)"
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['backstory']} Step 13 of 14: Backstory",
+            (
+                "Write a brief backstory for your character. This helps the Storyteller "
+                "weave your history into the chronicle.\n\n"
+                "\U0001f4dd **Consider including:**\n"
+                "\u2022 \U0001f464 Who were they as a **mortal**?\n"
+                "\u2022 \U0001f9db How were they **Embraced** (turned into a vampire)?\n"
+                "\u2022 \U0001f5e1\ufe0f What **drives** them in their Requiem?\n\n"
+                "Type: `!wcc <your backstory>`\n"
+                "*Or `!wcc skip` to write it later*"
+            ),
+            step="backstory",
         )
+        await ctx.send(embed=embed)
 
     async def _step_backstory(self, ctx, session, char: WoDCharacter, choice: str):
         if choice.strip().lower() != "skip":
             char.backstory = choice.strip()[:1000]
 
-        # Finalize character
         char.finalize()
 
         session["step"] = "confirm"
@@ -1132,10 +1476,19 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         sheet = char.format_sheet()
         await self._send_long(ctx, sheet)
-        await ctx.send(
-            "\n**Does this look correct?**\n"
-            "Reply `!wcc yes` to confirm or `!wcc no` to start over."
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['confirm']} Step 14 of 14: Confirm Your Character",
+            (
+                "\U0001f4cb **Review your character sheet above.**\n\n"
+                "\u2705 Type `!wcc yes` to **confirm and save**\n"
+                "\u274c Type `!wcc no` to **start over**\n\n"
+                "*Once confirmed, your character joins the coterie!*"
+            ),
+            color=discord.Color.green(),
+            step="confirm",
         )
+        await ctx.send(embed=embed)
 
     async def _step_confirm(self, ctx, session, char: WoDCharacter, choice: str):
         choice = choice.strip().lower()
@@ -1143,7 +1496,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             channel_id = session.get("channel_id", str(ctx.channel.id))
             campaign = load_campaign(channel_id)
             if not campaign:
-                await ctx.send("Campaign not found. Something went wrong.")
+                await ctx.send("\u274c Campaign not found. Something went wrong.")
                 _clear_session(ctx.author.id)
                 return
 
@@ -1151,25 +1504,40 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             save_campaign(campaign)
             _clear_session(ctx.author.id)
 
-            await ctx.send(
-                f"**{char.name}** has been created and saved!\n"
-                f"Use `!wodsheet` in the server channel to view your character sheet."
+            embed = _make_embed(
+                "\U0001f389 Character Created!",
+                (
+                    f"**{char.name}** has been saved to the campaign!\n\n"
+                    "\U0001f4cb Use `!wodsheet` in the server channel to view your sheet.\n"
+                    "\U0001fa78 Use `!vitae` to track blood points.\n"
+                    "\U0001f4a0 Use `!willpower` to track willpower.\n"
+                    "\U0001f3b2 Use `!wroll` to make dice rolls."
+                ),
+                color=discord.Color.green(),
             )
+            await ctx.send(embed=embed)
 
             try:
                 guild_channel = self.bot.get_channel(int(channel_id))
                 if guild_channel:
+                    clan_data = get_clan_data(char.clan)
+                    clan_emoji = clan_data.get("emoji", "\U0001f9db") if clan_data else "\U0001f9db"
                     cov_str = f", {char.covenant}" if char.covenant else ""
-                    await guild_channel.send(
-                        f"**{char.name}** (Clan {char.clan}{cov_str}) has joined the coterie! "
-                        f"Created by {ctx.author.mention}."
+                    announce_embed = discord.Embed(
+                        title=f"{clan_emoji} New Kindred Rises",
+                        description=(
+                            f"**{char.name}** (Clan {char.clan}{cov_str}) has joined the coterie!\n"
+                            f"Created by {ctx.author.mention}."
+                        ),
+                        color=discord.Color.dark_red(),
                     )
+                    await guild_channel.send(embed=announce_embed)
             except Exception:
                 pass
 
         elif choice in ("no", "n", "restart"):
             _clear_session(ctx.author.id)
-            await ctx.send("Character creation cancelled. Use `!createwod` in a server channel to start over.")
+            await ctx.send("\u274c Character creation cancelled. Use `!createwod` in a server channel to start over.")
         else:
             await ctx.send("Reply `!wcc yes` to confirm or `!wcc no` to start over.")
 
