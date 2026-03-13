@@ -243,7 +243,196 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char = campaign.get_character(str(ctx.author.id))
         if not char:
             return await ctx.send("You don't have a character. Use `!createchar` to create one.")
-        await self._send_long(ctx, char.format_sheet())
+        embeds = self._build_sheet_embeds(char)
+        for embed in embeds:
+            await ctx.send(embed=embed)
+
+    def _build_sheet_embeds(self, char) -> list[discord.Embed]:
+        """Build rich Discord embeds for a WoD character sheet."""
+        embeds = []
+        dots = _dot_display
+
+        # ── Header embed ──
+        clan_data = get_clan_data(char.clan) if char.clan else None
+        clan_emoji = clan_data.get("emoji", "\U0001f9db") if clan_data else "\U0001f9db"
+        gender_str = f" | {char.gender}" if char.gender else ""
+
+        desc_lines = [f"{clan_emoji} **Clan {char.clan}**{gender_str}"]
+        if char.covenant:
+            cov_data = COVENANTS.get(char.covenant, {})
+            cov_emoji = cov_data.get("emoji", "\U0001f3db\ufe0f")
+            desc_lines.append(f"{cov_emoji} {char.covenant}")
+        if char.concept:
+            desc_lines.append(f"\U0001f4a1 *{char.concept}*")
+
+        header = discord.Embed(
+            title=f"\U0001f9db {char.name}",
+            description="\n".join(desc_lines),
+            color=discord.Color.dark_red(),
+        )
+
+        # Virtue / Vice
+        virtue_vice_parts = []
+        if char.virtue:
+            v_data = VIRTUE_DATA.get(char.virtue, {})
+            v_emoji = v_data.get("emoji", "\u2728")
+            virtue_vice_parts.append(f"{v_emoji} **Virtue:** {char.virtue}")
+        if char.vice:
+            vc_data = VICE_DATA.get(char.vice, {})
+            vc_emoji = vc_data.get("emoji", "\U0001f608")
+            virtue_vice_parts.append(f"{vc_emoji} **Vice:** {char.vice}")
+        if virtue_vice_parts:
+            header.add_field(name="\u200b", value="\n".join(virtue_vice_parts), inline=False)
+
+        # Vampire-specific stats
+        if char.creature_type == "Vampire":
+            bp_line = f"\U0001fa78 **Blood Potency:** {dots(char.blood_potency, 10)}"
+            hum_line = f"\u2764\ufe0f **Humanity:** {dots(char.humanity, 10)}"
+            vitae_line = f"\U0001f7e5 **Vitae:** {dots(char.vitae, char.vitae_max)} ({char.vitae}/{char.vitae_max}, {char.vitae_per_turn}/turn)"
+            header.add_field(name="\u200b", value=f"{bp_line}\n{hum_line}\n{vitae_line}", inline=False)
+
+        # Health & Willpower
+        health_symbols = {"": "\u25a1", "B": "\u25a8", "L": "\u2716", "A": "\u2738"}
+        if char.health_track:
+            health_str = " ".join(health_symbols.get(d, "\u25a1") for d in char.health_track)
+        else:
+            health_str = "\u25a1 " * char.health_max
+        wp_str = dots(char.willpower_current, char.willpower_max)
+
+        header.add_field(
+            name="\U0001f3e5 Health",
+            value=f"{health_str}\n`[ ] Empty  [▨] Bash  [✖] Lethal  [✸] Agg`",
+            inline=False,
+        )
+        header.add_field(
+            name="\U0001f4a0 Willpower",
+            value=f"{wp_str} ({char.willpower_current}/{char.willpower_max})",
+            inline=True,
+        )
+
+        # Derived stats
+        derived_parts = [
+            f"\U0001f6e1\ufe0f **Defense:** {char.defense}",
+            f"\u26a1 **Initiative:** +{char.initiative_mod}",
+            f"\U0001f3c3 **Speed:** {char.speed}",
+        ]
+        if char.armor:
+            derived_parts.append(f"\U0001f6e1\ufe0f **Armor:** {char.armor}")
+        header.add_field(name="\u200b", value=" \u2502 ".join(derived_parts), inline=False)
+
+        embeds.append(header)
+
+        # ── Attributes embed ──
+        attr_embed = discord.Embed(
+            title="\U0001f4aa Attributes",
+            color=discord.Color.dark_red(),
+        )
+        for cat_name, attr_list in [
+            ("Mental", WOD_MENTAL_ATTRIBUTES),
+            ("Physical", WOD_PHYSICAL_ATTRIBUTES),
+            ("Social", WOD_SOCIAL_ATTRIBUTES),
+        ]:
+            cat_emoji = CAT_EMOJIS.get(cat_name, "")
+            lines = []
+            for attr in attr_list:
+                val = char.attributes.get(attr, 1)
+                lines.append(f"**{attr}:** {dots(val, 5)}")
+            attr_embed.add_field(
+                name=f"{cat_emoji} {cat_name}",
+                value="\n".join(lines),
+                inline=True,
+            )
+        embeds.append(attr_embed)
+
+        # ── Skills embed ──
+        skills_embed = discord.Embed(
+            title="\U0001f4da Skills",
+            color=discord.Color.dark_red(),
+        )
+        for cat_name, skill_list in [
+            ("Mental", WOD_MENTAL_SKILLS),
+            ("Physical", WOD_PHYSICAL_SKILLS),
+            ("Social", WOD_SOCIAL_SKILLS),
+        ]:
+            cat_emoji = CAT_EMOJIS.get(cat_name, "")
+            lines = []
+            for sk in skill_list:
+                val = char.skills.get(sk, 0)
+                if val > 0:
+                    lines.append(f"**{sk}:** {dots(val, 5)}")
+                else:
+                    lines.append(f"{sk}: {dots(0, 5)}")
+            skills_embed.add_field(
+                name=f"{cat_emoji} {cat_name}",
+                value="\n".join(lines),
+                inline=True,
+            )
+
+        # Specialties inline
+        if char.specialties:
+            spec_lines = []
+            for skill, specs in char.specialties.items():
+                spec_lines.append(f"\U0001f3af **{skill}:** {', '.join(specs)}")
+            skills_embed.add_field(
+                name="\U0001f3af Specialties",
+                value="\n".join(spec_lines),
+                inline=False,
+            )
+        embeds.append(skills_embed)
+
+        # ── Disciplines & Merits embed ──
+        if char.disciplines or char.merits:
+            powers_embed = discord.Embed(
+                title="\U0001fa78 Disciplines & \u2b50 Merits",
+                color=discord.Color.dark_red(),
+            )
+            if char.disciplines:
+                disc_lines = []
+                for disc, val in sorted(char.disciplines.items()):
+                    disc_lines.append(f"**{disc}:** {dots(val, 5)}")
+                powers_embed.add_field(
+                    name="\U0001fa78 Disciplines",
+                    value="\n".join(disc_lines),
+                    inline=True,
+                )
+            if char.merits:
+                merit_lines = []
+                for merit, val in sorted(char.merits.items()):
+                    merit_lines.append(f"**{merit}:** {dots(val, 5)}")
+                powers_embed.add_field(
+                    name="\u2b50 Merits",
+                    value="\n".join(merit_lines),
+                    inline=True,
+                )
+            embeds.append(powers_embed)
+
+        # ── Weapons & Equipment embed ──
+        if char.weapons or char.inventory:
+            gear_embed = discord.Embed(
+                title="\u2694\ufe0f Gear",
+                color=discord.Color.dark_red(),
+            )
+            if char.weapons:
+                wep_lines = []
+                for w in char.weapons:
+                    dmg = w.get("damage", 0)
+                    dtype = w.get("type", "B")
+                    wep_lines.append(f"\u2694\ufe0f **{w['name']}** — Damage +{dmg} ({dtype})")
+                gear_embed.add_field(
+                    name="Weapons",
+                    value="\n".join(wep_lines),
+                    inline=False,
+                )
+            if char.inventory:
+                items = [char._format_inv_item(e) for e in char.inventory[:10]]
+                gear_embed.add_field(
+                    name="\U0001f392 Equipment",
+                    value=", ".join(items),
+                    inline=False,
+                )
+            embeds.append(gear_embed)
+
+        return embeds
 
     @commands.command(name="vitae", aliases=["blood"])
     async def quick_vitae(self, ctx: commands.Context, *, amount: str = ""):
