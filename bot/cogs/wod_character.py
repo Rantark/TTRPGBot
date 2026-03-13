@@ -1976,13 +1976,20 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                     pass
                 return
 
-            elif emoji_str == NAV_PREV:
-                page_idx = (page_idx - 1) % len(pages)
+            elif emoji_str in (NAV_PREV, NAV_NEXT):
+                page_idx = (page_idx + (-1 if emoji_str == NAV_PREV else 1)) % len(pages)
                 cursor = 0
-
-            elif emoji_str == NAV_NEXT:
-                page_idx = (page_idx + 1) % len(pages)
-                cursor = 0
+                # Clear old reactions and re-add for the new page
+                try:
+                    await msg.clear_reactions()
+                except discord.HTTPException:
+                    pass
+                new_emojis = NUMBER_EMOJIS[:len(pages[page_idx]["items"])] + EDIT_NAV_EMOJIS
+                for e in new_emojis:
+                    try:
+                        await msg.add_reaction(e)
+                    except discord.HTTPException:
+                        pass
 
             elif emoji_str == EDIT_PLUS and items:
                 name = items[cursor]
