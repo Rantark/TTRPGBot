@@ -2,15 +2,23 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.2"
+__version__ = "1.8.3"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 2
+    'patch': 3
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.3** - March 13, 2026
+- Revamped WoD character sheet (!wodsheet) with rich Discord embeds
+- Filled/empty dot displays (●/○) for attributes, skills, disciplines, merits
+- Clan, covenant, virtue, and vice emojis on the sheet
+- Category emojis (🧠 Mental, 💪 Physical, 🗣️ Social) for attributes and skills
+- Visual health track symbols (□ Empty, ▨ Bash, ✖ Lethal, ✸ Agg)
+- Organized embed fields for disciplines, merits, weapons, and equipment
+
 **Version 1.8.2** - March 13, 2026
 - !suggestcampaign now supports both D&D 5e and World of Darkness
 - First step asks to choose game system before suggesting campaign ideas
