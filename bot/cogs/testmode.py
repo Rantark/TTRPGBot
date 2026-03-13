@@ -399,6 +399,99 @@ class TestModeCog(commands.Cog, name="Test Mode"):
         embed.set_footer(text="Test mode — campaign data is saved but intended for testing only")
         await ctx.send(embed=embed)
 
+    @commands.command(name="testcreate", aliases=["testcc"])
+    async def testcreate(self, ctx: commands.Context, system: str = ""):
+        """Start a test campaign in SETUP phase for testing character creation.
+
+        Usage:
+          !testcreate        — Choose D&D or WoD interactively
+          !testcreate dnd    — D&D character creation test
+          !testcreate wod    — WoD character creation test
+        """
+        channel_id = str(ctx.channel.id)
+
+        # Check for existing campaign
+        existing = load_campaign(channel_id)
+        if existing and existing.phase != CampaignPhase.NONE:
+            await ctx.send(
+                "⚠️ There's already a campaign in this channel.\n"
+                "Use `!endtest` to end it first, or use a different channel."
+            )
+            return
+
+        # Determine game system
+        system = system.lower().strip()
+        if system in ("dnd", "dnd5e", "d&d", "dnd5"):
+            game_system = "dnd5e"
+        elif system in ("wod", "vampire", "vtm", "vtr"):
+            game_system = "wod"
+        elif system == "":
+            import asyncio
+            msg = await ctx.send(
+                "🧪 **Test Character Creation — Choose Game System**\n\n"
+                "1️⃣ **D&D 5th Edition** — Full character creation wizard\n"
+                "2️⃣ **World of Darkness** — Vampire character creation wizard\n\n"
+                "*React to choose*"
+            )
+            emojis = ["1️⃣", "2️⃣"]
+            for emoji in emojis:
+                await msg.add_reaction(emoji)
+
+            def check(reaction, user):
+                return (
+                    user == ctx.author
+                    and str(reaction.emoji) in emojis
+                    and reaction.message.id == msg.id
+                )
+
+            try:
+                reaction, _ = await self.bot.wait_for("reaction_add", timeout=30.0, check=check)
+                game_system = "dnd5e" if str(reaction.emoji) == "1️⃣" else "wod"
+            except asyncio.TimeoutError:
+                await ctx.send("⏰ Timed out. Use `!testcreate dnd` or `!testcreate wod`.")
+                return
+        else:
+            await ctx.send("Unknown system. Use `!testcreate dnd` or `!testcreate wod`.")
+            return
+
+        # Create the test campaign in SETUP phase (no characters)
+        campaign = Campaign(channel_id, str(ctx.guild.id), game_system=game_system)
+        campaign.phase = CampaignPhase.SETUP
+        campaign.dm_id = str(ctx.author.id)
+        campaign.name = f"Test Creation ({game_system.upper()})"
+        campaign.description = "Temporary test campaign for character creation testing."
+
+        save_campaign(campaign)
+        self._test_channels.add(channel_id)
+
+        create_cmd = "`!createwod`" if game_system == "wod" else "`!createchar`"
+        system_label = "World of Darkness" if game_system == "wod" else "D&D 5e"
+
+        embed = discord.Embed(
+            title="🧪 Test Creation Mode",
+            description=(
+                f"**System:** {system_label}\n"
+                f"**Phase:** SETUP — ready for character creation\n\n"
+                f"Run {create_cmd} to start the character creation wizard.\n"
+                f"The full interactive flow will run just like a real campaign."
+            ),
+            color=0x3399FF,
+        )
+        embed.add_field(
+            name="Commands",
+            value=(
+                f"{create_cmd} — Start character creation\n"
+                "`!cc <choice>` — Make creation choices (in DMs)\n"
+                "`!cc restart` — Restart creation from step 1\n"
+                "`!deletechar` — Delete and start over\n"
+                "`!sheet` — View your sheet when done\n"
+                "`!endtest` — End this test campaign"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Test mode — campaign is in SETUP phase for creation testing")
+        await ctx.send(embed=embed)
+
     @commands.command(name="testchar", aliases=["switchchar"])
     async def testchar(self, ctx: commands.Context, template: str = ""):
         """Switch your test character to a different pre-built template.

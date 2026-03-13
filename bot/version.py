@@ -20,6 +20,7 @@ RELEASE_NOTES = """
 - !testlist — preview all available test character templates with stats
 - !endtest — clean up the test campaign when done
 - Campaign starts in ACTIVE phase — all gameplay commands work immediately
+- !testcreate — sets up a SETUP-phase campaign for testing character creation flows
 - No more needing to start a new campaign just to test features
 
 **Version 1.8.6** - March 13, 2026
