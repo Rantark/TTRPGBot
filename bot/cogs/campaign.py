@@ -785,31 +785,101 @@ class CampaignCog(commands.Cog, name="Campaign"):
                            "Use `!endcampaign` to end it first.")
             return
 
-        # Ask for style preference
-        msg = await ctx.send(
-            "**Campaign Suggestions**\n\n"
-            "What kind of campaign are you interested in?\n\n"
-            "1. **Combat-Focused** — Battles and tactical encounters\n"
-            "2. **Roleplay-Heavy** — Political intrigue, social encounters\n"
-            "3. **Mystery/Investigation** — Solve crimes, uncover conspiracies\n"
-            "4. **Exploration** — Discover new lands, dungeon crawling\n"
-            "5. **Surprise Me** — Let Claude decide!\n\n"
-            "React with a number or type `1`-`5`"
+        # ── Step 1: Choose game system ──
+        system_msg = await ctx.send(
+            "**\U0001f3b2 Campaign Suggestions**\n\n"
+            "First, which game system?\n\n"
+            "\u2694\ufe0f **D&D 5th Edition** \u2014 Classic fantasy adventure\n"
+            "\U0001f9db **World of Darkness** \u2014 Vampire: The Requiem / Gothic horror\n\n"
+            "*React to choose or type `1` or `2`*"
         )
 
+        sys_emojis = ["\u2694\ufe0f", "\U0001f9db"]
+        for emoji in sys_emojis:
+            await system_msg.add_reaction(emoji)
+
+        def check_sys_reaction(reaction, user):
+            return (
+                user == ctx.author
+                and str(reaction.emoji) in sys_emojis
+                and reaction.message.id == system_msg.id
+            )
+
+        def check_sys_message(m):
+            return (
+                m.author == ctx.author
+                and m.channel == ctx.channel
+                and m.content.strip() in ("1", "2")
+            )
+
+        game_system = None
+        done, pending = await asyncio.wait(
+            [
+                asyncio.ensure_future(self.bot.wait_for("reaction_add", timeout=60.0, check=check_sys_reaction)),
+                asyncio.ensure_future(self.bot.wait_for("message", timeout=60.0, check=check_sys_message)),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+        try:
+            result = done.pop().result()
+            if isinstance(result, tuple):
+                reaction, _ = result
+                game_system = "dnd5e" if str(reaction.emoji) == "\u2694\ufe0f" else "wod"
+            else:
+                game_system = "dnd5e" if result.content.strip() == "1" else "wod"
+        except (asyncio.TimeoutError, Exception):
+            await ctx.send("Campaign suggestion timed out. Try again with `!suggestcampaign`.")
+            return
+
+        is_wod = game_system == "wod"
+        system_label = "World of Darkness" if is_wod else "D&D 5e"
+        system_emoji = "\U0001f9db" if is_wod else "\u2694\ufe0f"
+
+        # ── Step 2: Choose play style (system-appropriate) ──
+        if is_wod:
+            style_prompt = (
+                f"**{system_emoji} {system_label} \u2014 What kind of chronicle?**\n\n"
+                "1\u20e3 **Political Intrigue** \u2014 Vampire court politics, power struggles, and betrayal\n"
+                "2\u20e3 **Horror/Survival** \u2014 Hunted by ancient terrors, fighting to survive the night\n"
+                "3\u20e3 **Mystery/Investigation** \u2014 Uncover conspiracies, track down rogue Kindred\n"
+                "4\u20e3 **Personal Drama** \u2014 Struggle with humanity, relationships, and the Beast within\n"
+                "5\u20e3 **Surprise Me** \u2014 Let Claude decide!\n\n"
+                "React with a number or type `1`\u2013`5`"
+            )
+            style_map = {
+                "1\u20e3": "political intrigue with vampire court politics, power struggles between covenants, and backstabbing betrayal",
+                "2\u20e3": "horror and survival where the coterie is hunted by ancient terrors and must fight to survive against powerful enemies",
+                "3\u20e3": "mystery and investigation focused on uncovering Kindred conspiracies, tracking rogue vampires, and solving supernatural crimes",
+                "4\u20e3": "personal drama exploring the struggle with humanity, mortal relationships, the Beast within, and what it means to be Kindred",
+                "5\u20e3": "a balanced mix of all elements \u2014 surprise me with something unique and compelling",
+            }
+        else:
+            style_prompt = (
+                f"**{system_emoji} {system_label} \u2014 What kind of campaign?**\n\n"
+                "1\u20e3 **Combat-Focused** \u2014 Battles and tactical encounters\n"
+                "2\u20e3 **Roleplay-Heavy** \u2014 Political intrigue, social encounters\n"
+                "3\u20e3 **Mystery/Investigation** \u2014 Solve crimes, uncover conspiracies\n"
+                "4\u20e3 **Exploration** \u2014 Discover new lands, dungeon crawling\n"
+                "5\u20e3 **Surprise Me** \u2014 Let Claude decide!\n\n"
+                "React with a number or type `1`\u2013`5`"
+            )
+            style_map = {
+                "1\u20e3": "combat-focused with lots of battles and tactical encounters",
+                "2\u20e3": "roleplay-heavy with political intrigue and social encounters",
+                "3\u20e3": "mystery and investigation focused on solving crimes and uncovering secrets",
+                "4\u20e3": "exploration-focused with dungeon crawling and discovering new lands",
+                "5\u20e3": "a balanced mix of all elements \u2014 surprise me with something unique",
+            }
+
+        msg = await ctx.send(style_prompt)
         emojis = ["1\u20e3", "2\u20e3", "3\u20e3", "4\u20e3", "5\u20e3"]
         for emoji in emojis:
             await msg.add_reaction(emoji)
 
-        style_map = {
-            "1\u20e3": "combat-focused with lots of battles and tactical encounters",
-            "2\u20e3": "roleplay-heavy with political intrigue and social encounters",
-            "3\u20e3": "mystery and investigation focused on solving crimes and uncovering secrets",
-            "4\u20e3": "exploration-focused with dungeon crawling and discovering new lands",
-            "5\u20e3": "a balanced mix of all elements — surprise me with something unique",
-        }
-
-        # Wait for reaction or message
         def check_reaction(reaction, user):
             return (
                 user == ctx.author
@@ -839,11 +909,9 @@ class CampaignCog(commands.Cog, name="Campaign"):
         try:
             result = done.pop().result()
             if isinstance(result, tuple):
-                # Reaction
                 reaction, _ = result
                 style = style_map.get(str(reaction.emoji))
             else:
-                # Message
                 idx = int(result.content.strip()) - 1
                 style = list(style_map.values())[idx]
         except (asyncio.TimeoutError, Exception):
@@ -854,26 +922,45 @@ class CampaignCog(commands.Cog, name="Campaign"):
             await ctx.send("Invalid choice.")
             return
 
-        # Generate suggestions from Claude
-        await ctx.send("Claude is brainstorming campaign ideas...")
+        # ── Step 3: Generate suggestions from Claude ──
+        await ctx.send(f"{system_emoji} Claude is brainstorming {system_label} campaign ideas...")
 
-        prompt = (
-            f"Generate 3 D&D 5e campaign concepts that are {style}.\n\n"
-            "For each campaign, provide:\n"
-            "- A compelling title (3-6 words)\n"
-            "- A 2-3 sentence hook that makes players want to join\n"
-            "- Suggested starting level (1-5)\n\n"
-            "Format as:\n\n"
-            "**1. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
-            "**2. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
-            "**3. [Title]**\n[Hook]\n*Starting Level: [level]*"
-        )
+        if is_wod:
+            prompt = (
+                f"Generate 3 World of Darkness (Vampire: The Requiem) chronicle concepts that are {style}.\n\n"
+                "These are campaigns for a coterie (group) of vampires in a modern gothic setting.\n"
+                "The five clans are: Daeva (seductive), Gangrel (feral), Mekhet (shadowy), "
+                "Nosferatu (monstrous), and Ventrue (commanding).\n"
+                "The five covenants are: Carthian Movement, Circle of the Crone, Invictus, "
+                "Lancea et Sanctum, and Ordo Dracul.\n\n"
+                "For each chronicle, provide:\n"
+                "- A compelling title (3-6 words, gothic/dark tone)\n"
+                "- A 2-3 sentence hook that makes players want to join\n"
+                "- The setting city or region\n"
+                "- Which clans/covenants are most relevant\n\n"
+                "Format as:\n\n"
+                "**1. [Title]**\n[Hook]\n*Setting: [city/region]* | *Key Factions: [clans/covenants]*\n\n"
+                "**2. [Title]**\n[Hook]\n*Setting: [city/region]* | *Key Factions: [clans/covenants]*\n\n"
+                "**3. [Title]**\n[Hook]\n*Setting: [city/region]* | *Key Factions: [clans/covenants]*"
+            )
+        else:
+            prompt = (
+                f"Generate 3 D&D 5e campaign concepts that are {style}.\n\n"
+                "For each campaign, provide:\n"
+                "- A compelling title (3-6 words)\n"
+                "- A 2-3 sentence hook that makes players want to join\n"
+                "- Suggested starting level (1-5)\n\n"
+                "Format as:\n\n"
+                "**1. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
+                "**2. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
+                "**3. [Title]**\n[Hook]\n*Starting Level: [level]*"
+            )
 
         async with ctx.typing():
             suggestions = await self.bot.dm_engine.generate_simple_response(prompt)
 
         suggestion_msg = await ctx.send(
-            f"**Campaign Suggestions:**\n\n"
+            f"**{system_emoji} {system_label} Campaign Suggestions:**\n\n"
             f"{suggestions}\n\n"
             "React with 1\u20e3, 2\u20e3, or 3\u20e3 to start that campaign, "
             "or use `!newcampaign <name>` to create your own."
@@ -905,29 +992,32 @@ class CampaignCog(commands.Cog, name="Campaign"):
         else:
             campaign_name = f"Campaign {choice + 1}"
 
-        # Extract starting level if mentioned
-        levels = re.findall(r'\*Starting Level:\s*(\d+)\*', suggestions)
+        # Extract starting level if mentioned (D&D only)
         starting_level = 1
-        if len(levels) > choice:
-            try:
-                starting_level = max(1, min(20, int(levels[choice])))
-            except ValueError:
-                pass
+        if not is_wod:
+            levels = re.findall(r'\*Starting Level:\s*(\d+)\*', suggestions)
+            if len(levels) > choice:
+                try:
+                    starting_level = max(1, min(20, int(levels[choice])))
+                except ValueError:
+                    pass
 
-        # Create the campaign
-        campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id))
+        # Create the campaign with the chosen game system
+        campaign = Campaign(str(ctx.channel.id), str(ctx.guild.id), game_system=game_system)
         campaign.dm_id = str(ctx.author.id)
         campaign.name = campaign_name
         campaign.phase = CampaignPhase.SETUP
         campaign.starting_level = starting_level
         save_campaign(campaign)
 
-        level_note = f"\nStarting Level: **{starting_level}**" if starting_level > 1 else ""
+        create_cmd = "`!createwod`" if is_wod else "`!createchar`"
+        level_note = f"\nStarting Level: **{starting_level}**" if starting_level > 1 and not is_wod else ""
         await ctx.send(
-            f"**Campaign Created: {campaign_name}**\n"
+            f"**{system_emoji} Campaign Created: {campaign_name}** ({system_label})\n"
             f"DM: {ctx.author.display_name}{level_note}\n"
-            f"Phase: **Setup** — Players can now create characters with `!createchar`\n"
-            f"When everyone is ready, the DM uses `!startcampaign` to begin!"
+            f"Phase: **Setup** \u2014 Players can now create characters with {create_cmd}\n"
+            + (f"DM: Use `!setlevel <level>` to set the starting level (default: 1)\n" if not is_wod else "")
+            + "When everyone is ready, the DM uses `!startcampaign` to begin!"
         )
 
     @commands.command(name="campaigninfo")
