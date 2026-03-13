@@ -929,27 +929,21 @@ class CampaignCog(commands.Cog, name="Campaign"):
             prompt = (
                 f"Generate 3 World of Darkness (Vampire: The Requiem) chronicle concepts that are {style}.\n\n"
                 "These are campaigns for a coterie (group) of vampires in a modern gothic setting.\n"
-                "The five clans are: Daeva (seductive), Gangrel (feral), Mekhet (shadowy), "
-                "Nosferatu (monstrous), and Ventrue (commanding).\n"
-                "The five covenants are: Carthian Movement, Circle of the Crone, Invictus, "
-                "Lancea et Sanctum, and Ordo Dracul.\n\n"
-                "For each chronicle, provide:\n"
-                "- A compelling title (3-6 words, gothic/dark tone)\n"
-                "- A 2-3 sentence hook that makes players want to join\n"
-                "- The setting city or region\n"
-                "- Which clans/covenants are most relevant\n\n"
+                "Clans: Daeva, Gangrel, Mekhet, Nosferatu, Ventrue.\n"
+                "Covenants: Carthian Movement, Circle of the Crone, Invictus, "
+                "Lancea et Sanctum, Ordo Dracul.\n\n"
+                "For each chronicle provide a title (3-6 words), a 1-2 sentence hook, "
+                "setting city, and key factions. Keep each entry under 250 characters.\n\n"
                 "Format as:\n\n"
-                "**1. [Title]**\n[Hook]\n*Setting: [city/region]* | *Key Factions: [clans/covenants]*\n\n"
-                "**2. [Title]**\n[Hook]\n*Setting: [city/region]* | *Key Factions: [clans/covenants]*\n\n"
-                "**3. [Title]**\n[Hook]\n*Setting: [city/region]* | *Key Factions: [clans/covenants]*"
+                "**1. [Title]**\n[Hook]\n*Setting: [city]* | *Factions: [names]*\n\n"
+                "**2. [Title]**\n[Hook]\n*Setting: [city]* | *Factions: [names]*\n\n"
+                "**3. [Title]**\n[Hook]\n*Setting: [city]* | *Factions: [names]*"
             )
         else:
             prompt = (
                 f"Generate 3 D&D 5e campaign concepts that are {style}.\n\n"
-                "For each campaign, provide:\n"
-                "- A compelling title (3-6 words)\n"
-                "- A 2-3 sentence hook that makes players want to join\n"
-                "- Suggested starting level (1-5)\n\n"
+                "For each campaign provide a title (3-6 words), a 1-2 sentence hook, "
+                "and starting level (1-5). Keep each entry under 250 characters.\n\n"
                 "Format as:\n\n"
                 "**1. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
                 "**2. [Title]**\n[Hook]\n*Starting Level: [level]*\n\n"
@@ -959,12 +953,28 @@ class CampaignCog(commands.Cog, name="Campaign"):
         async with ctx.typing():
             suggestions = await self.bot.dm_engine.generate_simple_response(prompt)
 
-        suggestion_msg = await ctx.send(
-            f"**{system_emoji} {system_label} Campaign Suggestions:**\n\n"
-            f"{suggestions}\n\n"
-            "React with 1\u20e3, 2\u20e3, or 3\u20e3 to start that campaign, "
+        # Discord messages must be <= 2000 chars; split if needed
+        header = f"**{system_emoji} {system_label} Campaign Suggestions:**\n\n"
+        footer = (
+            "\n\nReact with 1\u20e3, 2\u20e3, or 3\u20e3 to start that campaign, "
             "or use `!newcampaign <name>` to create your own."
         )
+        full_msg = f"{header}{suggestions}{footer}"
+
+        if len(full_msg) <= 2000:
+            suggestion_msg = await ctx.send(full_msg)
+        else:
+            # Send suggestions in one message, pick prompt in another
+            suggestion_text = f"{header}{suggestions}"
+            if len(suggestion_text) > 2000:
+                # Truncate suggestions to fit
+                max_len = 2000 - len(header) - 3  # 3 for "..."
+                suggestion_text = f"{header}{suggestions[:max_len]}..."
+            await ctx.send(suggestion_text)
+            suggestion_msg = await ctx.send(
+                "React with 1\u20e3, 2\u20e3, or 3\u20e3 to start that campaign, "
+                "or use `!newcampaign <name>` to create your own."
+            )
 
         pick_emojis = ["1\u20e3", "2\u20e3", "3\u20e3"]
         for emoji in pick_emojis:
