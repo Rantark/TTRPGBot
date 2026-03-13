@@ -154,14 +154,44 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
     def _is_wod_campaign(self, campaign) -> bool:
         return campaign and campaign.game_system == GameSystem.WOD
 
+    async def _wizard_send(self, ctx, session, embed: discord.Embed):
+        """Update the wizard message in place, or send a new one.
+
+        Keeps the creation flow in a single updating message.
+        """
+        # Add progress bar to footer
+        step = session.get("step", "")
+        embed.set_footer(text=_progress_bar(step))
+
+        wizard_msg = session.get("wizard_msg")
+        if wizard_msg:
+            try:
+                await wizard_msg.edit(embed=embed)
+                try:
+                    await wizard_msg.clear_reactions()
+                except discord.HTTPException:
+                    pass
+                return wizard_msg
+            except discord.HTTPException:
+                pass
+
+        msg = await ctx.send(embed=embed)
+        session["wizard_msg"] = msg
+        _set_session(ctx.author.id, session)
+        return msg
+
     async def _send_with_reactions(self, ctx, embed: discord.Embed,
                                     options: list[str],
                                     emojis: list[str] = None,
                                     expected_step: str = ""):
-        """Send an embed with emoji reactions for selection."""
+        """Update the wizard embed with emoji reactions for selection."""
+        session = _get_session(ctx.author.id)
+
         if len(options) > 10 or not options:
-            # Fall back to text list
-            await ctx.send(embed=embed)
+            if session:
+                msg = await self._wizard_send(ctx, session, embed)
+            else:
+                await ctx.send(embed=embed)
             return
 
         if emojis is None:
@@ -169,7 +199,10 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         else:
             emojis = emojis[:len(options)]
 
-        msg = await ctx.send(embed=embed)
+        if session:
+            msg = await self._wizard_send(ctx, session, embed)
+        else:
+            msg = await ctx.send(embed=embed)
 
         for emoji in emojis:
             try:
@@ -577,7 +610,9 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="name",
             )
-            await ctx.author.send(embed=embed)
+            wizard_msg = await ctx.author.send(embed=embed)
+            session["wizard_msg"] = wizard_msg
+            _set_session(ctx.author.id, session)
             await ctx.send(f"\U0001f9db {ctx.author.mention} Check your DMs \u2014 character creation has started!")
         except discord.Forbidden:
             _clear_session(ctx.author.id)
@@ -618,7 +653,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="name",
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
             return
 
         await self._dispatch_step(ctx, choice)
@@ -670,7 +705,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             ),
             step="concept",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_concept(self, ctx, session, char: WoDCharacter, choice: str):
         char.concept = choice.strip()[:100]
@@ -736,36 +771,15 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.clan = match
         clan_data = get_clan_data(match)
 
-        # Show clan confirmation embed
-        clan_embed = discord.Embed(
-            title=f"{clan_data['emoji']} Clan {match} \u2014 *\"{clan_data['nickname']}\"*",
-            description=clan_data['description'],
-            color=discord.Color.dark_red(),
-        )
-        clan_embed.add_field(
-            name="\U0001fa78 Clan Disciplines",
-            value=", ".join(clan_data['clan_disciplines']),
-            inline=True,
-        )
-        clan_embed.add_field(
-            name="\U0001f4aa Favored Attributes",
-            value=", ".join(clan_data['favored_attributes']),
-            inline=True,
-        )
-        clan_embed.add_field(
-            name="\u26a0\ufe0f Clan Weakness",
-            value=clan_data['clan_weakness'],
-            inline=False,
-        )
-        await ctx.send(embed=clan_embed)
-
-        # Now show covenant selection
+        # Move to covenant — clan info is included in the covenant prompt header
         session["step"] = "covenant"
         _set_session(ctx.author.id, session)
 
         cov_names = get_covenant_names()
         cov_emojis = []
+        disc_str = ", ".join(clan_data['clan_disciplines'])
         lines = [
+            f"\u2705 **Clan {match}** \u2014 *\"{clan_data['nickname']}\"* | \U0001fa78 {disc_str}\n\n"
             "Your **covenant** is your political and philosophical faction in vampire society. "
             "You can also go unaligned.\n"
         ]
@@ -1008,7 +1022,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="attr_assign_primary",
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
 
     def _get_attrs_for_category(self, category: str) -> list[str]:
         if category == "Mental":
@@ -1091,7 +1105,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step=session["step"],
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _advance_attr_category(self, ctx, session, char: WoDCharacter):
         """Move to the next attribute category or to skills."""
@@ -1114,7 +1128,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="attr_assign_secondary",
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
         elif step == "attr_assign_secondary":
             session["step"] = "attr_assign_tertiary"
             session["attr_dots_remaining"] = 3
@@ -1131,7 +1145,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="attr_assign_tertiary",
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
         elif step == "attr_assign_tertiary":
             # Attributes done — move to skills
             session["step"] = "skill_priority"
@@ -1228,7 +1242,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="skill_assign_primary",
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
 
     async def _step_skill_assign(self, ctx, session, char: WoDCharacter, choice: str):
         """Handle skill dot assignment for current category."""
@@ -1298,7 +1312,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step=session["step"],
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _advance_skill_category(self, ctx, session, char: WoDCharacter):
         """Move to next skill category or to specialties."""
@@ -1331,7 +1345,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step=next_s,
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
         else:
             # Skills done — move to specialties
             session["step"] = "specialties"
@@ -1357,7 +1371,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
                 ),
                 step="specialties",
             )
-            await ctx.send(embed=embed)
+            await self._wizard_send(ctx, session, embed)
 
     async def _step_specialties(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("specialties_remaining", 3)
@@ -1420,7 +1434,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             ),
             step="specialties",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
         if rem == 0:
             await self._advance_to_disciplines(ctx, session, char)
@@ -1461,7 +1475,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             ),
             step="disciplines",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_disciplines(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("discipline_dots_remaining", 3)
@@ -1526,7 +1540,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step="disciplines",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _advance_to_merits(self, ctx, session, char: WoDCharacter):
         """Move to merit selection."""
@@ -1548,9 +1562,9 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             ),
             step="merits",
         )
-        await ctx.send(embed=intro_embed)
+        await self._wizard_send(ctx, session, intro_embed)
 
-        # Category embeds
+        # Category embeds (sent as separate reference messages)
         for cat in categories:
             cat_merits = {k: v for k, v in MERITS.items() if v["category"] == cat}
             if not cat_merits:
@@ -1641,7 +1655,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             ),
             step="merits",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _advance_to_backstory(self, ctx, session, char: WoDCharacter):
         session["step"] = "backstory"
@@ -1661,7 +1675,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             ),
             step="backstory",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_backstory(self, ctx, session, char: WoDCharacter, choice: str):
         if choice.strip().lower() != "skip":
@@ -1672,8 +1686,14 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["step"] = "confirm"
         _set_session(ctx.author.id, session)
 
-        sheet = char.format_sheet()
-        await self._send_long(ctx, sheet)
+        # Send sheet preview as separate embeds
+        preview_embeds = self._build_sheet_embeds(char)
+        for pe in preview_embeds:
+            await ctx.send(embed=pe)
+
+        # Clear wizard msg so confirm gets a fresh one after the preview
+        session["wizard_msg"] = None
+        _set_session(ctx.author.id, session)
 
         embed = _make_embed(
             f"{STEP_EMOJIS['confirm']} Step 14 of 14: Confirm Your Character",
@@ -1686,7 +1706,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             color=discord.Color.green(),
             step="confirm",
         )
-        await ctx.send(embed=embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_confirm(self, ctx, session, char: WoDCharacter, choice: str):
         choice = choice.strip().lower()

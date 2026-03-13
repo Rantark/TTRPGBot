@@ -2,15 +2,24 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.5"
+__version__ = "1.8.6"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 5
+    'patch': 6
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.6** - March 13, 2026
+- Interactive wizard for D&D and WoD character creation
+- Single updating embed message instead of a stream of separate messages
+- Progress bar on every step: [▓▓▓▓▓░░░░░░░░░] 42% — Step 5/12
+- Wizard edits in place: race→class→abilities flow seamlessly
+- Step confirmations consolidated into next step header (✅ Race: Hill Dwarf → Step 4: Class)
+- WoD confirm step now shows rich embed sheet preview
+- Fewer messages, cleaner DM experience for both systems
+
 **Version 1.8.5** - March 13, 2026
 - D&D character sheet (!sheet) now uses rich Discord embeds
 - Embed sections: Header/HP, Ability Scores, Skills, Traits/Features, Weapons, Spellcasting, Inventory

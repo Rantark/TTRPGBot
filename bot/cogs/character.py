@@ -86,6 +86,47 @@ for _sk, _ab in SKILLS.items():
 for _ab in SKILLS_BY_ABILITY:
     SKILLS_BY_ABILITY[_ab].sort()
 
+# ── D&D Creation Progress Tracking ──
+DND_CREATION_STEPS = [
+    "name", "gender", "race", "class", "abilities",
+    "background", "skills", "equipment", "weapons",
+    "spells", "backstory", "confirm",
+]
+
+DND_STEP_TO_PROGRESS = {
+    "name": "name", "gender": "gender", "race": "race",
+    "draconic_ancestry": "race", "half_elf_bonus": "race",
+    "class": "class",
+    "ability_method": "abilities", "ability_assign": "abilities", "point_buy": "abilities",
+    "background": "background", "skills": "skills",
+    "equipment": "equipment", "weapons": "weapons",
+    "spells_cantrips": "spells", "spells_level1": "spells",
+    "backstory": "backstory", "confirm": "confirm",
+}
+
+DND_STEP_EMOJIS = {
+    "name": "📛", "gender": "⚧️", "race": "🧝", "class": "⚔️",
+    "abilities": "📊", "background": "📜", "skills": "📚",
+    "equipment": "🎒", "weapons": "⚔️", "spells": "🔮",
+    "backstory": "📖", "confirm": "✅",
+}
+
+
+def _dnd_progress_bar(current_step: str) -> str:
+    """Generate a visual progress bar for D&D character creation."""
+    progress_step = DND_STEP_TO_PROGRESS.get(current_step, current_step)
+    try:
+        idx = DND_CREATION_STEPS.index(progress_step)
+    except ValueError:
+        idx = 0
+    total = len(DND_CREATION_STEPS)
+    pct = int((idx / total) * 100)
+    bar_len = 14
+    filled_blocks = int((idx / total) * bar_len)
+    bar = "▓" * filled_blocks + "░" * (bar_len - filled_blocks)
+    step_emoji = DND_STEP_EMOJIS.get(progress_step, "")
+    return f"[{bar}] {pct}% — Step {idx + 1}/{total} {step_emoji}"
+
 
 class CharacterCog(commands.Cog, name="Character"):
     """Commands for character creation and management."""
@@ -96,15 +137,41 @@ class CharacterCog(commands.Cog, name="Character"):
     def _get_campaign(self, ctx: commands.Context):
         return load_campaign(str(ctx.channel.id))
 
+    async def _wizard_send(self, ctx, session, embed: discord.Embed):
+        """Update the wizard message in place, or send a new one.
+
+        This keeps the creation flow in a single updating message.
+        """
+        # Add progress bar to footer
+        step = session.get("step", "")
+        embed.set_footer(text=_dnd_progress_bar(step))
+
+        wizard_msg = session.get("wizard_msg")
+        if wizard_msg:
+            try:
+                await wizard_msg.edit(embed=embed)
+                # Clear old reactions
+                try:
+                    await wizard_msg.clear_reactions()
+                except discord.HTTPException:
+                    pass
+                return wizard_msg
+            except discord.HTTPException:
+                pass
+
+        msg = await ctx.send(embed=embed)
+        session["wizard_msg"] = msg
+        _set_session(ctx.author.id, session)
+        return msg
+
     async def _send_with_reactions(self, ctx, header: str, options: list[str],
                                     display_options: list[str] = None,
                                     emojis: list[str] = None, expected_step: str = "",
                                     overflow: list[str] = None, allow_custom: bool = False):
-        """Send an embed prompt with emoji reactions for selection.
+        """Update the wizard embed with emoji reactions for selection.
 
-        Adds reactions to the message and starts a background listener.
-        When a reaction is clicked, routes the selection through _dispatch_step.
-        Falls back to numbered list if more than 10 options.
+        Edits the existing wizard message in place (or sends a new one).
+        Adds reactions and starts a background listener.
 
         Args:
             options: The actual values sent to the step handler when selected.
@@ -113,6 +180,8 @@ class CharacterCog(commands.Cog, name="Character"):
             overflow: Extra options shown as text (user must type !cc).
             allow_custom: If True, hint that custom text input is accepted.
         """
+        session = _get_session(ctx.author.id)
+
         if len(options) > 10 or not options:
             # Too many for emojis — fall back to numbered list embed
             display = display_options or options
@@ -121,8 +190,11 @@ class CharacterCog(commands.Cog, name="Character"):
                 description=f"{header}\n\n{opt_list}",
                 color=discord.Color.blue(),
             )
-            embed.set_footer(text="Reply with: !cc <number or name>")
-            await ctx.send(embed=embed)
+            if session:
+                msg = await self._wizard_send(ctx, session, embed)
+            else:
+                embed.set_footer(text="Reply with: !cc <number or name>")
+                msg = await ctx.send(embed=embed)
             return
 
         if emojis is None:
@@ -140,16 +212,17 @@ class CharacterCog(commands.Cog, name="Character"):
             lines.append(f"\nAlso available: {', '.join(overflow)}")
             lines.append("*Type `!cc <name>` to select these*")
 
-        footer_text = "React to choose, or type !cc <name>"
-        if allow_custom:
-            footer_text = "React to choose, or type !cc <custom value>"
-
         embed = discord.Embed(
             description=f"{header}\n\n" + "\n".join(lines),
             color=discord.Color.blue(),
         )
-        embed.set_footer(text=footer_text)
-        msg = await ctx.send(embed=embed)
+
+        if session:
+            msg = await self._wizard_send(ctx, session, embed)
+        else:
+            footer_text = "React to choose, or type !cc <custom value>" if allow_custom else "React to choose, or type !cc <name>"
+            embed.set_footer(text=footer_text)
+            msg = await ctx.send(embed=embed)
 
         # Add reactions
         for emoji in emojis:
@@ -436,8 +509,10 @@ class CharacterCog(commands.Cog, name="Character"):
                 value="What is your character's name?\n`!cc <name>`\nExample: `!cc Thandril`",
                 inline=False,
             )
-            start_embed.set_footer(text="Step 1/12 — Character Creation")
-            await ctx.author.send(embed=start_embed)
+            start_embed.set_footer(text=_dnd_progress_bar("name"))
+            wizard_msg = await ctx.author.send(embed=start_embed)
+            session["wizard_msg"] = wizard_msg
+            _set_session(ctx.author.id, session)
             await ctx.send(f"{ctx.author.mention} Check your DMs — character creation has started there!")
         except discord.Forbidden:
             _clear_session(ctx.author.id)
@@ -541,8 +616,9 @@ class CharacterCog(commands.Cog, name="Character"):
             value="What is your character's name?\n`!cc <name>`\nExample: `!cc Thandril`",
             inline=False,
         )
-        embed.set_footer(text="Step 1/12 — Character Creation")
-        await ctx.send(embed=embed)
+        wizard_msg = await self._wizard_send(ctx, new_session, embed)
+        new_session["wizard_msg"] = wizard_msg
+        _set_session(ctx.author.id, new_session)
 
     async def _step_name(self, ctx, session, char: Character, choice: str):
         if not choice.strip():
@@ -675,18 +751,9 @@ class CharacterCog(commands.Cog, name="Character"):
         """Show race summary and move to class selection."""
         race_display = char.subrace or char.race
         bonuses = ", ".join(f"{a} +{v}" for a, v in char.racial_bonuses.items())
-
-        race_embed = discord.Embed(
-            title=f"🧝 Race: {race_display}",
-            color=discord.Color.blue(),
-        )
-        race_embed.add_field(name="📊 Ability Bonuses", value=bonuses, inline=True)
-        race_embed.add_field(name="⚡ Speed", value=f"{char.speed} ft", inline=True)
-        trait_display = "\n".join(f"• {t}" for t in char.traits[:6])
-        if len(char.traits) > 6:
-            trait_display += f"\n*...and {len(char.traits) - 6} more*"
-        race_embed.add_field(name="🧬 Traits", value=trait_display, inline=False)
-        await ctx.send(embed=race_embed)
+        traits_short = ", ".join(char.traits[:4])
+        if len(char.traits) > 4:
+            traits_short += f" (+{len(char.traits) - 4} more)"
 
         session["step"] = "class"
         _set_session(ctx.author.id, session)
@@ -709,9 +776,15 @@ class CharacterCog(commands.Cog, name="Character"):
             primary = data.get("primary_ability", "")
             overflow_display.append(f"{cls_emoji} {cls_name} ({primary}) — d{data['hit_die']} HP")
 
+        # Consolidate race summary + class selection into one wizard update
+        header = (
+            f"✅ **Race: {race_display}** — {bonuses} | ⚡ {char.speed}ft\n"
+            f"🧬 {traits_short}\n\n"
+            f"**⚔️ Step 4: Class**\nChoose your class:"
+        )
+
         await self._send_with_reactions(
-            ctx,
-            f"**{CLASS_EMOJIS.get(char.char_class, '⚔️')} Step 4: Class**\nChoose your class:",
+            ctx, header,
             emoji_classes,
             display_options=display_list,
             expected_step="class",
@@ -789,28 +862,37 @@ class CharacterCog(commands.Cog, name="Character"):
             session["step"] = "ability_assign"
             _set_session(ctx.author.id, session)
 
-            detail_str = "\n".join(f"  Roll {i+1}: {d}" for i, d in enumerate(details))
-            reroll_note = f"\n*Rerolled {reroll_count} time(s) — requires at least one 15+ and no scores under 8*\n" if reroll_count > 0 else ""
-            await ctx.send(
-                f"**Rolled Ability Scores:**\n{detail_str}\n"
-                f"{reroll_note}\n"
-                f"Your scores: **{scores}**\n\n"
-                f"Assign them to abilities in order (STR DEX CON INT WIS CHA):\n"
-                f"Reply with: `!cc {' '.join(str(s) for s in scores)}`\n"
-                f"(Rearrange the numbers however you want)"
+            detail_str = "\n".join(f"Roll {i+1}: {d}" for i, d in enumerate(details))
+            reroll_note = f"\n*Rerolled {reroll_count}× — requires ≥15 and no scores <8*\n" if reroll_count > 0 else ""
+            embed = discord.Embed(
+                title="🎲 Rolled Ability Scores",
+                description=(
+                    f"{detail_str}\n{reroll_note}\n"
+                    f"Your scores: **{scores}**\n\n"
+                    f"Assign to abilities in order (STR DEX CON INT WIS CHA):\n"
+                    f"`!cc {' '.join(str(s) for s in scores)}`\n"
+                    f"*(Rearrange the numbers however you want)*"
+                ),
+                color=discord.Color.blue(),
             )
+            await self._wizard_send(ctx, session, embed)
 
         elif choice in ("2", "standard", "array", "standard array"):
             session["rolled_scores"] = list(STANDARD_ARRAY)
             session["step"] = "ability_assign"
             _set_session(ctx.author.id, session)
 
-            await ctx.send(
-                f"**Standard Array:** {STANDARD_ARRAY}\n\n"
-                f"Assign them to abilities in order (STR DEX CON INT WIS CHA):\n"
-                f"Reply with: `!cc 15 14 13 12 10 8`\n"
-                f"(Rearrange the numbers however you want)"
+            embed = discord.Embed(
+                title="📊 Standard Array",
+                description=(
+                    f"Scores: **{STANDARD_ARRAY}**\n\n"
+                    f"Assign to abilities in order (STR DEX CON INT WIS CHA):\n"
+                    f"`!cc 15 14 13 12 10 8`\n"
+                    f"*(Rearrange the numbers however you want)*"
+                ),
+                color=discord.Color.blue(),
             )
+            await self._wizard_send(ctx, session, embed)
 
         elif choice in ("3", "point", "buy", "point buy"):
             session["point_buy_scores"] = {a: 8 for a in ABILITY_NAMES}
@@ -857,17 +939,26 @@ class CharacterCog(commands.Cog, name="Character"):
         scores = session["point_buy_scores"]
         remaining = session["point_buy_remaining"]
 
-        lines = ["**Point Buy** — Budget remaining: **{0}**".format(remaining)]
+        lines = []
         for i, ab in enumerate(ABILITY_NAMES, 1):
             score = scores[ab]
             mod = modifier_str(score)
-            lines.append(f"  `{i}.` {ABILITY_FULL_NAMES[ab]:14s} {score:2d} ({mod})")
+            emoji = ABILITY_EMOJIS.get(ab, "")
+            lines.append(f"`{i}.` {emoji} **{ABILITY_FULL_NAMES[ab]}:** {score} ({mod})")
 
-        lines.append("\nTo adjust: `!cc <ability#> <new_score>` (e.g., `!cc 1 15` to set STR to 15)")
-        lines.append("Scores must be 8-15. When happy: `!cc done`")
-        lines.append(f"\nCost table: " + " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items()))
-
-        await ctx.send("\n".join(lines))
+        cost_table = " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items())
+        embed = discord.Embed(
+            title="🧮 Point Buy",
+            description=(
+                f"💰 Budget remaining: **{remaining}**\n\n"
+                + "\n".join(lines)
+                + f"\n\nTo adjust: `!cc <ability#> <score>` (e.g., `!cc 1 15`)\n"
+                f"Scores 8-15 | When happy: `!cc done`\n"
+                f"Cost: {cost_table}"
+            ),
+            color=discord.Color.blue(),
+        )
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_point_buy(self, ctx, session, char: Character, choice: str):
         if choice.strip().lower() == "done":
@@ -916,22 +1007,14 @@ class CharacterCog(commands.Cog, name="Character"):
         await self._show_point_buy(ctx, session)
 
     async def _show_abilities_and_advance_to_background(self, ctx, session, char: Character):
-        ab_embed = discord.Embed(
-            title="📊 Final Ability Scores",
-            description="*(racial bonuses applied)*",
-            color=discord.Color.green(),
-        )
+        # Build compact ability score summary
+        ab_parts = []
         for ab in ABILITY_NAMES:
             score = char.abilities[ab]
             bonus = char.racial_bonuses.get(ab, 0)
-            bonus_str = f" (+{bonus} racial)" if bonus else ""
+            bonus_str = f"(+{bonus})" if bonus else ""
             emoji = ABILITY_EMOJIS.get(ab, "")
-            ab_embed.add_field(
-                name=f"{emoji} {ABILITY_FULL_NAMES[ab]}",
-                value=f"**{score}** ({modifier_str(score)}){bonus_str}",
-                inline=True,
-            )
-        await ctx.send(embed=ab_embed)
+            ab_parts.append(f"{emoji} **{ab}** {score} ({modifier_str(score)}){bonus_str}")
 
         session["step"] = "background"
         _set_session(ctx.author.id, session)
@@ -940,10 +1023,17 @@ class CharacterCog(commands.Cog, name="Character"):
         emoji_bgs = backgrounds[:10]
         overflow_bgs = backgrounds[10:]
 
-        await self._send_with_reactions(
-            ctx,
+        # Consolidate abilities + background into one wizard update
+        header = (
+            "✅ **Final Ability Scores** *(racial bonuses applied)*\n"
+            + " | ".join(ab_parts[:3]) + "\n"
+            + " | ".join(ab_parts[3:]) + "\n\n"
             "**📜 Step 6: Background**\n"
-            "Choose your background (grants 2 skill proficiencies):",
+            "Choose your background (grants 2 skill proficiencies):"
+        )
+
+        await self._send_with_reactions(
+            ctx, header,
             emoji_bgs,
             expected_step="background",
             overflow=overflow_bgs if overflow_bgs else None,
@@ -984,25 +1074,19 @@ class CharacterCog(commands.Cog, name="Character"):
         skill_list = _format_numbered_list(available_skills)
         already = ", ".join(char.skill_proficiencies) if char.skill_proficiencies else "None"
 
-        bg_embed = discord.Embed(
-            title=f"📜 Background: {bg_name}",
-            description=f"*{bg_data['description']}*",
-            color=discord.Color.blue(),
-        )
-        bg_embed.add_field(name="⭐ Feature", value=bg_data['feature'], inline=False)
-        bg_embed.add_field(name="📚 Skills Gained", value=", ".join(bg_data['skill_proficiencies']), inline=True)
-        await ctx.send(embed=bg_embed)
-
-        skills_embed = discord.Embed(
+        # Consolidate background summary + skill selection into one wizard update
+        embed = discord.Embed(
             title=f"📚 Step 7: Class Skills",
             description=(
+                f"✅ **Background: {bg_name}** — {', '.join(bg_data['skill_proficiencies'])}\n"
+                f"*{bg_data['feature']}*\n\n"
                 f"Already proficient: {already}\n"
-                f"Choose **{num_skills}** from:\n\n{skill_list}"
+                f"Choose **{num_skills}** from:\n\n{skill_list}\n\n"
+                f"`!cc 1 3` or `!cc Athletics Perception`"
             ),
             color=discord.Color.blue(),
         )
-        skills_embed.set_footer(text="Reply with numbers: !cc 1 3 or names: !cc Athletics Perception")
-        await ctx.send(embed=skills_embed)
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_skills(self, ctx, session, char: Character, choice: str):
         available = session["available_skills"]
@@ -1059,8 +1143,6 @@ class CharacterCog(commands.Cog, name="Character"):
             all_items = list(session["equip_picks"]) + list(session["equip_fixed"])
             char.inventory = all_items
 
-            equip_display = "\n".join(f"  {item}" for item in all_items)
-
             # Move to weapon selection
             session["step"] = "weapons"
             session["weapon_choices"] = CLASS_STARTING_WEAPONS.get(char.char_class, [])
@@ -1068,7 +1150,6 @@ class CharacterCog(commands.Cog, name="Character"):
             session["weapon_picks"] = []
             _set_session(ctx.author.id, session)
 
-            await ctx.send(f"**Starting Equipment:**\n{equip_display}")
             await self._show_weapon_choice(ctx, session, char)
             return
 
@@ -1076,9 +1157,14 @@ class CharacterCog(commands.Cog, name="Character"):
         choice_num = idx + 1
         total = len(choices)
 
+        picked_so_far = session.get("equip_picks", [])
+        picked_str = ""
+        if picked_so_far:
+            picked_str = f"✅ Chosen: {', '.join(picked_so_far)}\n\n"
+
         await self._send_with_reactions(
             ctx,
-            f"**Step 8: Starting Equipment** (choice {choice_num}/{total})\nPick one:",
+            f"{picked_str}**🎒 Step 8: Starting Equipment** (choice {choice_num}/{total})\nPick one:",
             current_choice,
             expected_step="equipment",
         )
@@ -1135,11 +1221,9 @@ class CharacterCog(commands.Cog, name="Character"):
                 weapon_names.append(weapon_key)
                 display_labels.append(weapon_key)
 
-        header = f"**Step 9: Weapon Selection** ({label})\nChoose your weapon:"
-        if idx > 0:
-            picked_names = [w.get('name', '?') for w in session.get("weapon_picks", [])]
-            if picked_names:
-                header += f"\nAlready chosen: {', '.join(picked_names)}"
+        picked_names = [w.get('name', '?') for w in session.get("weapon_picks", [])]
+        picked_str = f"✅ Chosen: {', '.join(picked_names)}\n\n" if picked_names else ""
+        header = f"{picked_str}**⚔️ Step 9: Weapon Selection** ({label})\nChoose your weapon:"
 
         await self._send_with_reactions(
             ctx,
@@ -1190,7 +1274,6 @@ class CharacterCog(commands.Cog, name="Character"):
         session["weapon_index"] = idx + 1
         _set_session(ctx.author.id, session)
 
-        await ctx.send(f"Selected: **{weapon_data['name']}**")
         await self._show_weapon_choice(ctx, session, char)
 
     # ------------------------------------------------------------------
@@ -1333,7 +1416,6 @@ class CharacterCog(commands.Cog, name="Character"):
         session["cantrips_picked"].append(selected)
         _set_session(ctx.author.id, session)
 
-        await ctx.send(f"Added cantrip: **{selected}**")
         await self._show_cantrip_choice(ctx, session, char)
 
     async def _show_spell_choice(self, ctx, session, char: Character):
@@ -1393,7 +1475,6 @@ class CharacterCog(commands.Cog, name="Character"):
         session["spells_picked"].append(selected)
         _set_session(ctx.author.id, session)
 
-        await ctx.send(f"Added spell: **{selected}**")
         await self._show_spell_choice(ctx, session, char)
 
     async def _finalize_spells(self, ctx, session, char: Character):
@@ -1428,12 +1509,17 @@ class CharacterCog(commands.Cog, name="Character"):
         session["step"] = "backstory"
         _set_session(ctx.author.id, session)
 
-        await ctx.send(
-            f"**Step 11: Backstory** *(optional)*\n"
-            f"Write a short backstory for **{char.name}** (1-3 sentences).\n"
-            f"This helps the DM weave your character into the story.\n\n"
-            f"Reply with: `!cc <your backstory>` or `!cc skip` to skip"
+        embed = discord.Embed(
+            title="📖 Step 11: Backstory",
+            description=(
+                f"*(optional)*\n"
+                f"Write a short backstory for **{char.name}** (1-3 sentences).\n"
+                f"This helps the DM weave your character into the story.\n\n"
+                f"`!cc <your backstory>` or `!cc skip` to skip"
+            ),
+            color=discord.Color.blue(),
         )
+        await self._wizard_send(ctx, session, embed)
 
     async def _step_backstory(self, ctx, session, char: Character, choice: str):
         if not choice.strip():
@@ -1458,10 +1544,15 @@ class CharacterCog(commands.Cog, name="Character"):
         session["step"] = "confirm"
         _set_session(ctx.author.id, session)
 
-        # Send preview embeds
+        # Send preview embeds as separate reference messages
+        # (wizard will handle the confirm prompt below)
         preview_embeds = self._build_sheet_embeds(char)
         for embed in preview_embeds:
             await ctx.send(embed=embed)
+
+        # Clear wizard msg so confirm gets a fresh one after the preview
+        session["wizard_msg"] = None
+        _set_session(ctx.author.id, session)
 
         await self._send_with_reactions(
             ctx,
