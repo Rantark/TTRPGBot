@@ -2,15 +2,22 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 __version_info__ = {
     'major': 1,
-    'minor': 7,
+    'minor': 8,
     'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.0** - March 13, 2026
+- World of Darkness (Vampire: The Masquerade) game system support
+- WoD character creation with clans, disciplines, and merits
+- WoD dice pool roller with hunger dice mechanics
+- Multi-system campaign support (D&D 5e and WoD)
+- System-aware DM/Storyteller engine adapts to chosen game system
+
 **Version 1.7.0** - March 10, 2026
 - New !exportstory command (alias !story) — Claude writes a polished narrative of the entire campaign
 - Generates a fantasy-novel-style retelling using session logs, story summary, and chat history

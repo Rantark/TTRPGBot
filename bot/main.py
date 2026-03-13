@@ -107,7 +107,7 @@ async def on_ready():
 
     # Set bot status to show version
     await bot.change_presence(
-        activity=discord.Game(name=f"D&D 5e | !commands | v{__version__}")
+        activity=discord.Game(name=f"TTRPGs | !commands | v{__version__}")
     )
 
     # Start update checker
