@@ -2,15 +2,26 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.6"
+__version__ = "1.8.7"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 6
+    'patch': 7
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.7** - March 13, 2026
+- New !testmode command — spin up a temporary test campaign with pre-built characters
+- Choose D&D 5e or WoD: !testmode dnd / !testmode wod (or pick interactively)
+- D&D templates: Fighter (Aldric), Wizard (Elara), Cleric (Brom), Rogue (Pip) — all Level 3
+- WoD templates: Daeva Invictus (Vivienne), Gangrel Carthian (Marcus) — fully built vampires
+- !testchar <template> — switch your character to a different pre-built template on the fly
+- !testlist — preview all available test character templates with stats
+- !endtest — clean up the test campaign when done
+- Campaign starts in ACTIVE phase — all gameplay commands work immediately
+- No more needing to start a new campaign just to test features
+
 **Version 1.8.6** - March 13, 2026
 - Interactive wizard for D&D and WoD character creation
 - Single updating embed message instead of a stream of separate messages

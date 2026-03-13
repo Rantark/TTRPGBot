@@ -63,6 +63,7 @@ EXTENSIONS = [
     "bot.cogs.utility",
     "bot.cogs.info",
     "bot.cogs.balance",
+    "bot.cogs.testmode",
 ]
 
 
