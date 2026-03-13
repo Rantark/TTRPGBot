@@ -17,7 +17,9 @@ from bot.data.wod_clans import (
     VIRTUE_DATA, VICE_DATA,
     get_clan_names, get_clan_data, get_covenant_names,
 )
-from bot.data.wod_disciplines import get_clan_disciplines, get_discipline_data
+from bot.data.wod_disciplines import (
+    get_clan_disciplines, get_discipline_data, get_discipline_names,
+)
 from bot.data.wod_merits import MERITS, MERIT_DOTS_AT_CREATION, get_merit_names
 from bot.storage import load_campaign, save_campaign
 
@@ -44,6 +46,13 @@ NUMBER_EMOJIS = [
     "6\u20e3", "7\u20e3", "8\u20e3", "9\u20e3", "\U0001f51f"
 ]
 CONFIRM_EMOJIS = ["\u2705", "\u274c"]
+# Edit-mode navigation emojis
+NAV_PREV = "\u25c0\ufe0f"   # ◀️
+NAV_NEXT = "\u25b6\ufe0f"   # ▶️
+EDIT_PLUS = "\u2795"         # ➕
+EDIT_MINUS = "\u2796"        # ➖
+EDIT_SAVE = "\u2705"         # ✅
+EDIT_NAV_EMOJIS = [NAV_PREV, NAV_NEXT, EDIT_PLUS, EDIT_MINUS, EDIT_SAVE]
 
 # Step emojis for the progress bar
 STEP_EMOJIS = {
@@ -1729,6 +1738,257 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             await ctx.send("\u274c Character creation cancelled. Use `!createwod` in a server channel to start over.")
         else:
             await ctx.send("Reply `!wcc yes` to confirm or `!wcc no` to start over.")
+
+    # ------------------------------------------------------------------
+    # Interactive sheet editor (!wodedit)
+    # ------------------------------------------------------------------
+
+    # Page definitions: (page_title, category_emoji, item_list_fn, getter, setter, min_val, max_val)
+    # item_list_fn returns the list of item names for the page
+    # getter(char, name) returns current dots
+    # setter(char, name, val) sets the dots
+
+    _EDIT_PAGES = None  # built lazily per character
+
+    def _build_edit_pages(self, char):
+        """Build the list of editor pages for a character."""
+        pages = [
+            {
+                "title": "🧠 Mental Attributes",
+                "items": WOD_MENTAL_ATTRIBUTES,
+                "kind": "attributes",
+                "min": 1, "max": 5,
+            },
+            {
+                "title": "💪 Physical Attributes",
+                "items": WOD_PHYSICAL_ATTRIBUTES,
+                "kind": "attributes",
+                "min": 1, "max": 5,
+            },
+            {
+                "title": "🗣️ Social Attributes",
+                "items": WOD_SOCIAL_ATTRIBUTES,
+                "kind": "attributes",
+                "min": 1, "max": 5,
+            },
+            {
+                "title": "🧠 Mental Skills",
+                "items": WOD_MENTAL_SKILLS,
+                "kind": "skills",
+                "min": 0, "max": 5,
+            },
+            {
+                "title": "💪 Physical Skills",
+                "items": WOD_PHYSICAL_SKILLS,
+                "kind": "skills",
+                "min": 0, "max": 5,
+            },
+            {
+                "title": "🗣️ Social Skills",
+                "items": WOD_SOCIAL_SKILLS,
+                "kind": "skills",
+                "min": 0, "max": 5,
+            },
+            {
+                "title": "🩸 Disciplines",
+                "items": list(char.disciplines.keys()) if char.disciplines else get_clan_disciplines(char.clan),
+                "kind": "disciplines",
+                "min": 0, "max": 5,
+            },
+            {
+                "title": "⭐ Merits",
+                "items": list(char.merits.keys()) if char.merits else [],
+                "kind": "merits",
+                "min": 0, "max": 5,
+            },
+        ]
+        return pages
+
+    def _edit_get_val(self, char, kind: str, name: str) -> int:
+        if kind == "attributes":
+            return char.attributes.get(name, 1)
+        elif kind == "skills":
+            return char.skills.get(name, 0)
+        elif kind == "disciplines":
+            return char.disciplines.get(name, 0)
+        elif kind == "merits":
+            return char.merits.get(name, 0)
+        return 0
+
+    def _edit_set_val(self, char, kind: str, name: str, val: int):
+        if kind == "attributes":
+            char.attributes[name] = val
+        elif kind == "skills":
+            char.skills[name] = val
+        elif kind == "disciplines":
+            if val <= 0:
+                char.disciplines.pop(name, None)
+            else:
+                char.disciplines[name] = val
+        elif kind == "merits":
+            if val <= 0:
+                char.merits.pop(name, None)
+            else:
+                char.merits[name] = val
+
+    def _build_edit_embed(self, char, pages, page_idx: int, cursor: int) -> discord.Embed:
+        """Build the embed for the current editor page."""
+        page = pages[page_idx]
+        items = page["items"]
+        kind = page["kind"]
+
+        embed = discord.Embed(
+            title=f"✏️ Editing: {char.name}",
+            description=f"**{page['title']}**\nPage {page_idx + 1}/{len(pages)}",
+            color=discord.Color.gold(),
+        )
+
+        if not items:
+            embed.add_field(
+                name="No items",
+                value=f"No {kind} to edit. Use `!wcc` commands to add them first.",
+                inline=False,
+            )
+        else:
+            lines = []
+            for i, name in enumerate(items):
+                val = self._edit_get_val(char, kind, name)
+                dot_str = _dot_display(val, page["max"])
+                pointer = "▸ " if i == cursor else "  "
+                num = NUMBER_EMOJIS[i] if i < len(NUMBER_EMOJIS) else f"{i+1}."
+                lines.append(f"{pointer}{num} **{name}:** {dot_str} ({val}/{page['max']})")
+            embed.add_field(name="\u200b", value="\n".join(lines), inline=False)
+
+        # Controls legend
+        embed.set_footer(
+            text="◀️▶️ Change page │ 1️⃣-🔟 Select item │ ➕➖ Add/Remove dot │ ✅ Save & Exit"
+        )
+        return embed
+
+    @commands.command(name="wodedit", aliases=["wedit", "editwod"])
+    async def wod_edit(self, ctx: commands.Context):
+        """Interactively edit your WoD character sheet with emoji reactions.
+
+        Navigate pages with ◀️▶️, select items with number emojis,
+        and use ➕➖ to adjust dots. Press ✅ to save and exit.
+
+        Usage: !wodedit
+        """
+        campaign = self._get_campaign(ctx)
+        if not self._is_wod_campaign(campaign):
+            return
+        char = campaign.get_character(str(ctx.author.id))
+        if not char:
+            return await ctx.send("You don't have a character. Use `!createwod` to create one.")
+        if not char.creation_complete:
+            return await ctx.send("Finish character creation first with `!wcc`.")
+
+        pages = self._build_edit_pages(char)
+        page_idx = 0
+        cursor = 0
+
+        # Send initial embed
+        embed = self._build_edit_embed(char, pages, page_idx, cursor)
+        msg = await ctx.send(embed=embed)
+
+        # Add all control reactions
+        all_emojis = NUMBER_EMOJIS[:len(pages[page_idx]["items"])] + EDIT_NAV_EMOJIS
+        for emoji in all_emojis:
+            try:
+                await msg.add_reaction(emoji)
+            except discord.HTTPException:
+                pass
+
+        # ── Reaction loop ──
+        changed = False
+        timeout_seconds = 180.0
+
+        while True:
+            def check(reaction, user):
+                return (
+                    user.id == ctx.author.id
+                    and reaction.message.id == msg.id
+                    and str(reaction.emoji) in (
+                        NUMBER_EMOJIS[:len(pages[page_idx]["items"])] + EDIT_NAV_EMOJIS
+                    )
+                )
+
+            try:
+                reaction, user = await self.bot.wait_for(
+                    "reaction_add", timeout=timeout_seconds, check=check
+                )
+            except asyncio.TimeoutError:
+                # Auto-save on timeout
+                if changed:
+                    char.calc_derived()
+                    save_campaign(campaign)
+                embed = self._build_edit_embed(char, pages, page_idx, cursor)
+                embed.set_footer(text="⏰ Editor timed out. Changes saved." if changed else "⏰ Editor timed out.")
+                try:
+                    await msg.edit(embed=embed)
+                except discord.HTTPException:
+                    pass
+                return
+
+            emoji_str = str(reaction.emoji)
+
+            # Remove the user's reaction so they can tap again
+            try:
+                await msg.remove_reaction(reaction.emoji, user)
+            except discord.HTTPException:
+                pass
+
+            page = pages[page_idx]
+            items = page["items"]
+
+            if emoji_str == EDIT_SAVE:
+                # Save and exit
+                if changed:
+                    char.calc_derived()
+                    save_campaign(campaign)
+                embed = self._build_edit_embed(char, pages, page_idx, cursor)
+                embed.color = discord.Color.green()
+                embed.set_footer(text="✅ Changes saved!" if changed else "✅ No changes made.")
+                try:
+                    await msg.edit(embed=embed)
+                    await msg.clear_reactions()
+                except discord.HTTPException:
+                    pass
+                return
+
+            elif emoji_str == NAV_PREV:
+                page_idx = (page_idx - 1) % len(pages)
+                cursor = 0
+
+            elif emoji_str == NAV_NEXT:
+                page_idx = (page_idx + 1) % len(pages)
+                cursor = 0
+
+            elif emoji_str == EDIT_PLUS and items:
+                name = items[cursor]
+                val = self._edit_get_val(char, page["kind"], name)
+                if val < page["max"]:
+                    self._edit_set_val(char, page["kind"], name, val + 1)
+                    changed = True
+
+            elif emoji_str == EDIT_MINUS and items:
+                name = items[cursor]
+                val = self._edit_get_val(char, page["kind"], name)
+                if val > page["min"]:
+                    self._edit_set_val(char, page["kind"], name, val - 1)
+                    changed = True
+
+            elif emoji_str in NUMBER_EMOJIS:
+                idx = NUMBER_EMOJIS.index(emoji_str)
+                if idx < len(items):
+                    cursor = idx
+
+            # Update the embed
+            embed = self._build_edit_embed(char, pages, page_idx, cursor)
+            try:
+                await msg.edit(embed=embed)
+            except discord.HTTPException:
+                pass
 
     async def _send_long(self, ctx, text: str):
         while len(text) > 1990:

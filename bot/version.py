@@ -2,15 +2,24 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.3"
+__version__ = "1.8.4"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 3
+    'patch': 4
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.4** - March 13, 2026
+- New !wodedit command for interactive emoji-based character sheet editing
+- Navigate pages with ◀️▶️ (Attributes, Skills, Disciplines, Merits)
+- Select items with number emojis (1️⃣-🔟)
+- Tap ➕/➖ to add or remove dots — no typing needed
+- Visual cursor (▸) shows selected item
+- Auto-saves on ✅ or timeout
+- Derived stats (health, defense, speed, etc.) recalculated on save
+
 **Version 1.8.3** - March 13, 2026
 - Revamped WoD character sheet (!wodsheet) with rich Discord embeds
 - Filled/empty dot displays (●/○) for attributes, skills, disciplines, merits
