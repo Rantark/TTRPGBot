@@ -137,10 +137,13 @@ class CharacterCog(commands.Cog, name="Character"):
     def _get_campaign(self, ctx: commands.Context):
         return load_campaign(str(ctx.channel.id))
 
-    async def _wizard_send(self, ctx, session, embed: discord.Embed):
+    async def _wizard_send(self, ctx, session, embed: discord.Embed,
+                           keep_reactions: bool = False):
         """Update the wizard message in place, or send a new one.
 
         This keeps the creation flow in a single updating message.
+        If *keep_reactions* is True, only the embed is edited (no reaction
+        clearing) – used by the nav-emoji UI to avoid flicker.
         """
         # Add progress bar to footer
         step = session.get("step", "")
@@ -150,22 +153,23 @@ class CharacterCog(commands.Cog, name="Character"):
         if wizard_msg:
             try:
                 await wizard_msg.edit(embed=embed)
-                # Clear old reactions — try bulk clear first, fall back to
-                # removing the bot's own reactions one-by-one if that fails
-                # (e.g. missing Manage Messages permission).
-                cleared = False
-                try:
-                    await wizard_msg.clear_reactions()
-                    cleared = True
-                except discord.HTTPException:
-                    pass
-                if not cleared:
-                    old_emojis = session.pop("_active_emojis", [])
-                    for em in old_emojis:
-                        try:
-                            await wizard_msg.remove_reaction(em, self.bot.user)
-                        except discord.HTTPException:
-                            pass
+                if not keep_reactions:
+                    # Clear old reactions — try bulk clear first, fall back to
+                    # removing the bot's own reactions one-by-one if that fails
+                    # (e.g. missing Manage Messages permission).
+                    cleared = False
+                    try:
+                        await wizard_msg.clear_reactions()
+                        cleared = True
+                    except discord.HTTPException:
+                        pass
+                    if not cleared:
+                        old_emojis = session.pop("_active_emojis", [])
+                        for em in old_emojis:
+                            try:
+                                await wizard_msg.remove_reaction(em, self.bot.user)
+                            except discord.HTTPException:
+                                pass
                 return wizard_msg
             except discord.HTTPException:
                 pass
@@ -276,6 +280,230 @@ class CharacterCog(commands.Cog, name="Character"):
                 old_task.cancel()
             session["_reaction_task"] = asyncio.create_task(_listen())
             _set_session(ctx.author.id, session)
+
+    # ── Emoji-navigation helpers (◀️ ▶️ ➕ ➖ ✅) ──
+
+    DND_NAV_EMOJIS = [NAV_PREV, NAV_NEXT, EDIT_PLUS, EDIT_MINUS, EDIT_SAVE]
+
+    async def _send_with_nav(self, ctx, session, embed: discord.Embed,
+                              expected_step: str):
+        """Send embed with ◀️▶️➕➖✅ and a continuous listener."""
+        if session.get("_nav_active") and session.get("wizard_msg"):
+            msg = await self._wizard_send(ctx, session, embed, keep_reactions=True)
+        else:
+            msg = await self._wizard_send(ctx, session, embed)
+            for emoji in self.DND_NAV_EMOJIS:
+                try:
+                    await msg.add_reaction(emoji)
+                except discord.HTTPException:
+                    pass
+            session["_active_emojis"] = list(self.DND_NAV_EMOJIS)
+            session["_nav_active"] = True
+            _set_session(ctx.author.id, session)
+
+        async def _nav_listen():
+            while True:
+                def check(reaction, user):
+                    return (
+                        user.id == ctx.author.id
+                        and reaction.message.id == msg.id
+                        and str(reaction.emoji) in self.DND_NAV_EMOJIS
+                    )
+                try:
+                    reaction, user = await self.bot.wait_for(
+                        "reaction_add", timeout=120.0, check=check,
+                    )
+                    cur = _get_session(ctx.author.id)
+                    if not cur or cur.get("step") != expected_step:
+                        return
+                    try:
+                        await msg.remove_reaction(str(reaction.emoji), user)
+                    except discord.HTTPException:
+                        pass
+                    await self._handle_nav(ctx, str(reaction.emoji))
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    return
+
+        old_task = session.get("_reaction_task")
+        if old_task and not old_task.done():
+            old_task.cancel()
+        session["_reaction_task"] = asyncio.create_task(_nav_listen())
+        _set_session(ctx.author.id, session)
+
+    async def _handle_nav(self, ctx, emoji: str):
+        """Dispatch a nav-emoji press to the correct step handler."""
+        session = _get_session(ctx.author.id)
+        if not session:
+            return
+        step = session["step"]
+
+        if step == "point_buy":
+            await self._nav_point_buy(ctx, session, emoji)
+        elif step == "skills":
+            await self._nav_skills(ctx, session, emoji)
+
+    # ── Point Buy nav ──
+
+    async def _show_point_buy_nav(self, ctx, session):
+        """Render point buy with nav emojis."""
+        scores = session["point_buy_scores"]
+        remaining = session["point_buy_remaining"]
+        cursor = session.get("nav_cursor", 0)
+
+        lines = []
+        for i, ab in enumerate(ABILITY_NAMES):
+            score = scores[ab]
+            mod = modifier_str(score)
+            emoji = ABILITY_EMOJIS.get(ab, "")
+            marker = "\u25b8 " if i == cursor else "\u2002 "
+            hl = "**" if i == cursor else ""
+            lines.append(f"{marker}{emoji} {hl}{ABILITY_FULL_NAMES[ab]}{hl}: {score} ({mod})")
+
+        cost_table = " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items())
+        embed = discord.Embed(
+            title="\U0001f9ee Point Buy",
+            description=(
+                f"\U0001f4b0 Budget remaining: **{remaining}**\n\n"
+                + "\n".join(lines)
+                + f"\n\nCost: {cost_table}"
+                + "\n\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
+                "\n*Or type `!cc <ability#> <score>`*"
+            ),
+            color=discord.Color.blue(),
+        )
+        await self._send_with_nav(ctx, session, embed, "point_buy")
+
+    async def _nav_point_buy(self, ctx, session, emoji: str):
+        """Handle a nav-emoji press during point buy."""
+        scores = session["point_buy_scores"]
+        cursor = session.get("nav_cursor", 0)
+        remaining = session["point_buy_remaining"]
+        char = session["char"]
+
+        if emoji == NAV_PREV:
+            cursor = (cursor - 1) % 6
+        elif emoji == NAV_NEXT:
+            cursor = (cursor + 1) % 6
+        elif emoji == EDIT_PLUS:
+            ab = ABILITY_NAMES[cursor]
+            old_score = scores[ab]
+            if old_score < 15:
+                new_score = old_score + 1
+                cost_diff = POINT_BUY_COSTS[new_score] - POINT_BUY_COSTS[old_score]
+                if cost_diff <= remaining:
+                    scores[ab] = new_score
+                    session["point_buy_remaining"] = remaining - cost_diff
+        elif emoji == EDIT_MINUS:
+            ab = ABILITY_NAMES[cursor]
+            old_score = scores[ab]
+            if old_score > 8:
+                new_score = old_score - 1
+                refund = POINT_BUY_COSTS[old_score] - POINT_BUY_COSTS[new_score]
+                scores[ab] = new_score
+                session["point_buy_remaining"] = remaining + refund
+        elif emoji == EDIT_SAVE:
+            remaining = session["point_buy_remaining"]
+            if remaining < 0:
+                await ctx.send(f"You're over budget by {abs(remaining)} points!")
+                return
+            for ab in ABILITY_NAMES:
+                char.abilities[ab] = scores[ab]
+            for ab, bonus in char.racial_bonuses.items():
+                char.abilities[ab] += bonus
+            session["_nav_active"] = False
+            session["nav_cursor"] = 0
+            _set_session(ctx.author.id, session)
+            await self._show_abilities_and_advance_to_background(ctx, session, char)
+            return
+
+        session["nav_cursor"] = cursor
+        _set_session(ctx.author.id, session)
+        await self._show_point_buy_nav(ctx, session)
+
+    # ── Skill selection nav ──
+
+    async def _show_skills_nav(self, ctx, session):
+        """Render skill selection with nav toggle emojis."""
+        available = session["available_skills"]
+        num_needed = session["num_skills"]
+        cursor = session.get("nav_cursor", 0)
+        picks = session.get("skill_picks", [])
+        char = session["char"]
+
+        already = ", ".join(char.skill_proficiencies) if char.skill_proficiencies else "None"
+        lines = [f"Already proficient: {already}",
+                 f"Choose **{num_needed}** skills (**{num_needed - len(picks)}** remaining):\n"]
+        for i, sk in enumerate(available):
+            marker = "\u25b8 " if i == cursor else "\u2002 "
+            checked = "\u2705" if sk in picks else "\u2b1c"
+            hl = "**" if i == cursor else ""
+            ab = SKILLS.get(sk, "")
+            lines.append(f"{marker}{checked} {hl}{sk}{hl} ({ab})")
+
+        lines.append(
+            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795 Toggle  \u2502  \u2705 Done"
+            "\n*Or type `!cc 1 3` or `!cc Athletics Perception`*"
+        )
+
+        embed = discord.Embed(
+            title="\U0001f4da Step 7: Class Skills",
+            description="\n".join(lines),
+            color=discord.Color.blue(),
+        )
+        await self._send_with_nav(ctx, session, embed, "skills")
+
+    async def _nav_skills(self, ctx, session, emoji: str):
+        """Handle a nav-emoji press during skill selection."""
+        available = session["available_skills"]
+        num_needed = session["num_skills"]
+        cursor = session.get("nav_cursor", 0)
+        picks = session.get("skill_picks", [])
+        char = session["char"]
+
+        if emoji == NAV_PREV:
+            cursor = (cursor - 1) % len(available)
+        elif emoji == NAV_NEXT:
+            cursor = (cursor + 1) % len(available)
+        elif emoji in (EDIT_PLUS, EDIT_MINUS):
+            # Toggle the skill at cursor
+            sk = available[cursor]
+            if sk in picks:
+                picks.remove(sk)
+            elif len(picks) < num_needed:
+                picks.append(sk)
+        elif emoji == EDIT_SAVE:
+            if len(picks) != num_needed:
+                await ctx.send(f"Choose exactly **{num_needed}** skills ({len(picks)} selected).")
+                return
+            for skill in picks:
+                if skill not in char.skill_proficiencies:
+                    char.skill_proficiencies.append(skill)
+            session["_nav_active"] = False
+            session["nav_cursor"] = 0
+            _set_session(ctx.author.id, session)
+            # Advance to equipment (same as existing _step_skills)
+            cls_data = session["class_data"]
+            equip_options = cls_data.get("starting_equipment", [])
+            choices = []
+            fixed_items = []
+            for item in equip_options:
+                if isinstance(item, list):
+                    choices.append(item)
+                else:
+                    fixed_items.append(item)
+            session["equip_choices"] = choices
+            session["equip_fixed"] = fixed_items
+            session["equip_picks"] = []
+            session["equip_index"] = 0
+            session["step"] = "equipment"
+            _set_session(ctx.author.id, session)
+            await self._show_equipment_choice(ctx, session, char)
+            return
+
+        session["nav_cursor"] = cursor
+        session["skill_picks"] = picks
+        _set_session(ctx.author.id, session)
+        await self._show_skills_nav(ctx, session)
 
     async def _dispatch_step(self, ctx, choice: str):
         """Route a creation choice to the appropriate step handler."""
@@ -913,9 +1141,10 @@ class CharacterCog(commands.Cog, name="Character"):
             session["point_buy_scores"] = {a: 8 for a in ABILITY_NAMES}
             session["point_buy_remaining"] = POINT_BUY_BUDGET
             session["step"] = "point_buy"
+            session["nav_cursor"] = 0
             _set_session(ctx.author.id, session)
 
-            await self._show_point_buy(ctx, session)
+            await self._show_point_buy_nav(ctx, session)
 
         else:
             await ctx.send(
@@ -1019,7 +1248,7 @@ class CharacterCog(commands.Cog, name="Character"):
         session["point_buy_scores"][ab] = new_score
         _set_session(ctx.author.id, session)
 
-        await self._show_point_buy(ctx, session)
+        await self._show_point_buy_nav(ctx, session)
 
     async def _show_abilities_and_advance_to_background(self, ctx, session, char: Character):
         # Build compact ability score summary
@@ -1083,25 +1312,12 @@ class CharacterCog(commands.Cog, name="Character"):
 
         session["available_skills"] = available_skills
         session["num_skills"] = num_skills
+        session["skill_picks"] = []
+        session["nav_cursor"] = 0
         session["step"] = "skills"
         _set_session(ctx.author.id, session)
 
-        skill_list = _format_numbered_list(available_skills)
-        already = ", ".join(char.skill_proficiencies) if char.skill_proficiencies else "None"
-
-        # Consolidate background summary + skill selection into one wizard update
-        embed = discord.Embed(
-            title=f"📚 Step 7: Class Skills",
-            description=(
-                f"✅ **Background: {bg_name}** — {', '.join(bg_data['skill_proficiencies'])}\n"
-                f"*{bg_data['feature']}*\n\n"
-                f"Already proficient: {already}\n"
-                f"Choose **{num_skills}** from:\n\n{skill_list}\n\n"
-                f"`!cc 1 3` or `!cc Athletics Perception`"
-            ),
-            color=discord.Color.blue(),
-        )
-        await self._wizard_send(ctx, session, embed)
+        await self._show_skills_nav(ctx, session)
 
     async def _step_skills(self, ctx, session, char: Character, choice: str):
         available = session["available_skills"]

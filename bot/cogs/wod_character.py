@@ -154,10 +154,13 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
     def _is_wod_campaign(self, campaign) -> bool:
         return campaign and campaign.game_system == GameSystem.WOD
 
-    async def _wizard_send(self, ctx, session, embed: discord.Embed):
+    async def _wizard_send(self, ctx, session, embed: discord.Embed,
+                           keep_reactions: bool = False):
         """Update the wizard message in place, or send a new one.
 
         Keeps the creation flow in a single updating message.
+        If *keep_reactions* is True, only the embed is edited (no reaction
+        clearing) – used by the nav-emoji UI to avoid flicker.
         """
         # Add progress bar to footer
         step = session.get("step", "")
@@ -167,22 +170,23 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         if wizard_msg:
             try:
                 await wizard_msg.edit(embed=embed)
-                # Clear old reactions — try bulk clear first, fall back to
-                # removing the bot's own reactions one-by-one if that fails
-                # (e.g. missing Manage Messages permission).
-                cleared = False
-                try:
-                    await wizard_msg.clear_reactions()
-                    cleared = True
-                except discord.HTTPException:
-                    pass
-                if not cleared:
-                    old_emojis = session.pop("_active_emojis", [])
-                    for em in old_emojis:
-                        try:
-                            await wizard_msg.remove_reaction(em, self.bot.user)
-                        except discord.HTTPException:
-                            pass
+                if not keep_reactions:
+                    # Clear old reactions — try bulk clear first, fall back to
+                    # removing the bot's own reactions one-by-one if that fails
+                    # (e.g. missing Manage Messages permission).
+                    cleared = False
+                    try:
+                        await wizard_msg.clear_reactions()
+                        cleared = True
+                    except discord.HTTPException:
+                        pass
+                    if not cleared:
+                        old_emojis = session.pop("_active_emojis", [])
+                        for em in old_emojis:
+                            try:
+                                await wizard_msg.remove_reaction(em, self.bot.user)
+                            except discord.HTTPException:
+                                pass
                 return wizard_msg
             except discord.HTTPException:
                 pass
@@ -191,6 +195,390 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["wizard_msg"] = msg
         _set_session(ctx.author.id, session)
         return msg
+
+    # ── Emoji-navigation helpers (◀️ ▶️ ➕ ➖ ✅) ──
+
+    async def _send_with_nav(self, ctx, session, embed: discord.Embed,
+                              expected_step: str):
+        """Send *embed* with ◀️▶️➕➖✅ reactions and a continuous listener.
+
+        The listener keeps running (removing user reactions and dispatching
+        ``_handle_nav``) until the step changes or times out.
+        """
+        # If nav is already active on this message, just edit in place
+        if session.get("_nav_active") and session.get("wizard_msg"):
+            msg = await self._wizard_send(ctx, session, embed, keep_reactions=True)
+        else:
+            msg = await self._wizard_send(ctx, session, embed)
+            for emoji in EDIT_NAV_EMOJIS:
+                try:
+                    await msg.add_reaction(emoji)
+                except discord.HTTPException:
+                    pass
+            session["_active_emojis"] = list(EDIT_NAV_EMOJIS)
+            session["_nav_active"] = True
+            _set_session(ctx.author.id, session)
+
+        async def _nav_listen():
+            while True:
+                def check(reaction, user):
+                    return (
+                        user.id == ctx.author.id
+                        and reaction.message.id == msg.id
+                        and str(reaction.emoji) in EDIT_NAV_EMOJIS
+                    )
+                try:
+                    reaction, user = await self.bot.wait_for(
+                        "reaction_add", timeout=120.0, check=check,
+                    )
+                    cur = _get_session(ctx.author.id)
+                    if not cur or cur.get("step") != expected_step:
+                        return
+                    # Remove user's reaction so they can tap again
+                    try:
+                        await msg.remove_reaction(str(reaction.emoji), user)
+                    except discord.HTTPException:
+                        pass
+                    await self._handle_nav(ctx, str(reaction.emoji))
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    return
+
+        old_task = session.get("_reaction_task")
+        if old_task and not old_task.done():
+            old_task.cancel()
+        session["_reaction_task"] = asyncio.create_task(_nav_listen())
+        _set_session(ctx.author.id, session)
+
+    async def _handle_nav(self, ctx, emoji: str):
+        """Dispatch a nav-emoji press to the correct step handler."""
+        session = _get_session(ctx.author.id)
+        if not session:
+            return
+        step = session["step"]
+        char = session["char"]
+
+        if step in ("attr_assign_primary", "attr_assign_secondary",
+                     "attr_assign_tertiary"):
+            await self._nav_attr(ctx, session, char, emoji)
+        elif step in ("skill_assign_primary", "skill_assign_secondary",
+                       "skill_assign_tertiary"):
+            await self._nav_skill(ctx, session, char, emoji)
+        elif step == "disciplines":
+            await self._nav_discipline(ctx, session, char, emoji)
+        elif step == "merits":
+            await self._nav_merit(ctx, session, char, emoji)
+
+    # ── Attribute nav ──
+
+    async def _show_attr_nav(self, ctx, session, char: WoDCharacter):
+        """Render the attribute nav embed and attach/update nav emojis."""
+        category = session["attr_current_category"]
+        attrs = self._get_attrs_for_category(category)
+        cursor = session.get("nav_cursor", 0)
+        remaining = session["attr_dots_remaining"]
+
+        lines = [f"{CAT_EMOJIS[category]} **{category} Attributes**\n"]
+        for i, a in enumerate(attrs):
+            marker = "\u25b8 " if i == cursor else "\u2002 "
+            hl = "**" if i == cursor else ""
+            lines.append(
+                f"{marker}{hl}{a}{hl}: {_dot_display(char.attributes[a], 5)} ({char.attributes[a]})"
+            )
+
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
+        if remaining == 0:
+            lines.append("\n\u2705 All dots assigned! Press \u2705 to continue.")
+        lines.append(
+            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
+            "\n*Or type `!wcc <Attribute> <dots>`*"
+        )
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['attributes']} Attributes \u2014 {category}",
+            "\n".join(lines),
+            step=session["step"],
+        )
+        await self._send_with_nav(ctx, session, embed, session["step"])
+
+    async def _nav_attr(self, ctx, session, char: WoDCharacter, emoji: str):
+        """Handle a nav-emoji press during attribute assignment."""
+        category = session["attr_current_category"]
+        attrs = self._get_attrs_for_category(category)
+        cursor = session.get("nav_cursor", 0)
+        remaining = session["attr_dots_remaining"]
+
+        if emoji == NAV_PREV:
+            cursor = (cursor - 1) % len(attrs)
+        elif emoji == NAV_NEXT:
+            cursor = (cursor + 1) % len(attrs)
+        elif emoji == EDIT_PLUS:
+            attr = attrs[cursor]
+            cur_val = char.attributes[attr]
+            if cur_val < 5 and remaining > 0:
+                char.attributes[attr] = cur_val + 1
+                session["attr_dots_remaining"] -= 1
+        elif emoji == EDIT_MINUS:
+            attr = attrs[cursor]
+            cur_val = char.attributes[attr]
+            if cur_val > 1:
+                char.attributes[attr] = cur_val - 1
+                session["attr_dots_remaining"] += 1
+        elif emoji == EDIT_SAVE:
+            if session["attr_dots_remaining"] > 0:
+                await ctx.send(
+                    f"\u26a0\ufe0f You still have **{session['attr_dots_remaining']}** dots to assign!"
+                )
+                return
+            session["_nav_active"] = False
+            session["nav_cursor"] = 0
+            _set_session(ctx.author.id, session)
+            await self._advance_attr_category(ctx, session, char)
+            return
+
+        session["nav_cursor"] = cursor
+        _set_session(ctx.author.id, session)
+        await self._show_attr_nav(ctx, session, char)
+
+    # ── Skill nav ──
+
+    async def _show_skill_nav(self, ctx, session, char: WoDCharacter):
+        """Render the skill nav embed and attach/update nav emojis."""
+        category = session["skill_current_category"]
+        skills = self._get_skills_for_category(category)
+        cursor = session.get("nav_cursor", 0)
+        remaining = session["skill_dots_remaining"]
+
+        lines = [f"{CAT_EMOJIS[category]} **{category} Skills** (max 3 each)\n"]
+        for i, s in enumerate(skills):
+            marker = "\u25b8 " if i == cursor else "\u2002 "
+            hl = "**" if i == cursor else ""
+            v = char.skills.get(s, 0)
+            lines.append(f"{marker}{hl}{s}{hl}: {_dot_display(v, 3)} ({v})")
+
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
+        if remaining == 0:
+            lines.append("\n\u2705 All dots assigned! Press \u2705 to continue.")
+        lines.append(
+            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
+            "\n*Or type `!wcc <Skill> <dots>`*"
+        )
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['skills']} Skills \u2014 {category}",
+            "\n".join(lines),
+            step=session["step"],
+        )
+        await self._send_with_nav(ctx, session, embed, session["step"])
+
+    async def _nav_skill(self, ctx, session, char: WoDCharacter, emoji: str):
+        """Handle a nav-emoji press during skill assignment."""
+        category = session["skill_current_category"]
+        skills = self._get_skills_for_category(category)
+        cursor = session.get("nav_cursor", 0)
+        remaining = session["skill_dots_remaining"]
+
+        if emoji == NAV_PREV:
+            cursor = (cursor - 1) % len(skills)
+        elif emoji == NAV_NEXT:
+            cursor = (cursor + 1) % len(skills)
+        elif emoji == EDIT_PLUS:
+            skill = skills[cursor]
+            cur_val = char.skills.get(skill, 0)
+            if cur_val < 3 and remaining > 0:
+                char.skills[skill] = cur_val + 1
+                session["skill_dots_remaining"] -= 1
+        elif emoji == EDIT_MINUS:
+            skill = skills[cursor]
+            cur_val = char.skills.get(skill, 0)
+            if cur_val > 0:
+                char.skills[skill] = cur_val - 1
+                session["skill_dots_remaining"] += 1
+        elif emoji == EDIT_SAVE:
+            if session["skill_dots_remaining"] > 0:
+                await ctx.send(
+                    f"\u26a0\ufe0f You still have **{session['skill_dots_remaining']}** dots to assign!"
+                )
+                return
+            session["_nav_active"] = False
+            session["nav_cursor"] = 0
+            _set_session(ctx.author.id, session)
+            await self._advance_skill_category(ctx, session, char)
+            return
+
+        session["nav_cursor"] = cursor
+        _set_session(ctx.author.id, session)
+        await self._show_skill_nav(ctx, session, char)
+
+    # ── Discipline nav ──
+
+    async def _show_disc_nav(self, ctx, session, char: WoDCharacter):
+        """Render discipline nav embed."""
+        clan_discs = session.get("clan_disciplines", [])
+        cursor = session.get("nav_cursor", 0)
+        remaining = session.get("discipline_dots_remaining", 3)
+
+        lines = ["\U0001fa78 **Clan Disciplines** (max 2 each)\n"]
+        for i, d in enumerate(clan_discs):
+            marker = "\u25b8 " if i == cursor else "\u2002 "
+            hl = "**" if i == cursor else ""
+            v = char.disciplines.get(d, 0)
+            data = get_discipline_data(d)
+            desc = f" \u2014 *{data['description']}*" if data else ""
+            lines.append(f"{marker}{hl}{d}{hl}: {_dot_display(v, 2)} ({v}){desc}")
+
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
+        if remaining == 0:
+            lines.append("\n\u2705 All dots assigned! Press \u2705 to continue.")
+        lines.append(
+            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
+            "\n*Or type `!wcc <Discipline> <dots>`*"
+        )
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['disciplines']} Disciplines",
+            "\n".join(lines),
+            step="disciplines",
+        )
+        await self._send_with_nav(ctx, session, embed, "disciplines")
+
+    async def _nav_discipline(self, ctx, session, char: WoDCharacter, emoji: str):
+        """Handle a nav-emoji press during discipline assignment."""
+        clan_discs = session.get("clan_disciplines", [])
+        cursor = session.get("nav_cursor", 0)
+        remaining = session.get("discipline_dots_remaining", 3)
+
+        if emoji == NAV_PREV:
+            cursor = (cursor - 1) % len(clan_discs)
+        elif emoji == NAV_NEXT:
+            cursor = (cursor + 1) % len(clan_discs)
+        elif emoji == EDIT_PLUS:
+            disc = clan_discs[cursor]
+            cur_val = char.disciplines.get(disc, 0)
+            if cur_val < 2 and remaining > 0:
+                char.disciplines[disc] = cur_val + 1
+                session["discipline_dots_remaining"] -= 1
+        elif emoji == EDIT_MINUS:
+            disc = clan_discs[cursor]
+            cur_val = char.disciplines.get(disc, 0)
+            if cur_val > 0:
+                char.disciplines[disc] = cur_val - 1
+                session["discipline_dots_remaining"] += 1
+                if char.disciplines.get(disc, 0) == 0:
+                    char.disciplines.pop(disc, None)
+        elif emoji == EDIT_SAVE:
+            if remaining > 0:
+                await ctx.send(
+                    f"\u26a0\ufe0f You still have **{remaining}** dots to assign!"
+                )
+                return
+            session["_nav_active"] = False
+            session["nav_cursor"] = 0
+            _set_session(ctx.author.id, session)
+            await self._advance_to_merits(ctx, session, char)
+            return
+
+        session["nav_cursor"] = cursor
+        _set_session(ctx.author.id, session)
+        await self._show_disc_nav(ctx, session, char)
+
+    # ── Merit nav ──
+
+    async def _show_merit_nav(self, ctx, session, char: WoDCharacter):
+        """Render merit nav embed – flat list grouped by category."""
+        all_merits = list(MERITS.keys())
+        cursor = session.get("nav_cursor", 0)
+        remaining = session.get("merit_dots_remaining", MERIT_DOTS_AT_CREATION)
+
+        # Group merits by category for display
+        categories = ["Physical", "Mental", "Social", "Vampire"]
+        lines = []
+        flat_index = 0
+        for cat in categories:
+            cat_merits = [m for m in all_merits if MERITS[m]["category"] == cat]
+            if not cat_merits:
+                continue
+            cat_emoji = MERIT_CAT_EMOJIS.get(cat, "\u2b50")
+            lines.append(f"\n{cat_emoji} **{cat}**")
+            for m in cat_merits:
+                marker = "\u25b8 " if flat_index == cursor else "\u2002 "
+                hl = "**" if flat_index == cursor else ""
+                v = char.merits.get(m, 0)
+                dot_opts = "/".join(str(d) for d in MERITS[m]["dots"])
+                max_dots = max(MERITS[m]["dots"])
+                lines.append(
+                    f"{marker}{hl}{m}{hl}: {_dot_display(v, max_dots)} ({v})  `[{dot_opts}]`"
+                )
+                flat_index += 1
+
+        # Show description of highlighted merit
+        highlighted = all_merits[cursor]
+        lines.append(f"\n\U0001f4d6 *{MERITS[highlighted]['description']}*")
+
+        # Show current picks
+        if char.merits:
+            picks = ", ".join(f"{k} ({v})" for k, v in char.merits.items())
+            lines.append(f"\n\u2b50 **Selected:** {picks}")
+
+        lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
+        lines.append(
+            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
+            "\n*Or type `!wcc <Merit> <dots>`*"
+        )
+
+        embed = _make_embed(
+            f"{STEP_EMOJIS['merits']} Merits",
+            "\n".join(lines),
+            step="merits",
+        )
+        await self._send_with_nav(ctx, session, embed, "merits")
+
+    async def _nav_merit(self, ctx, session, char: WoDCharacter, emoji: str):
+        """Handle a nav-emoji press during merit selection."""
+        all_merits = list(MERITS.keys())
+        cursor = session.get("nav_cursor", 0)
+        remaining = session.get("merit_dots_remaining", MERIT_DOTS_AT_CREATION)
+
+        if emoji == NAV_PREV:
+            cursor = (cursor - 1) % len(all_merits)
+        elif emoji == NAV_NEXT:
+            cursor = (cursor + 1) % len(all_merits)
+        elif emoji == EDIT_PLUS:
+            merit = all_merits[cursor]
+            cur_val = char.merits.get(merit, 0)
+            valid = MERITS[merit]["dots"]
+            # Find next valid dot value
+            higher = [d for d in valid if d > cur_val]
+            if higher:
+                new_val = higher[0]
+                cost = new_val - cur_val
+                if cost <= remaining:
+                    char.merits[merit] = new_val
+                    session["merit_dots_remaining"] = remaining - cost
+        elif emoji == EDIT_MINUS:
+            merit = all_merits[cursor]
+            cur_val = char.merits.get(merit, 0)
+            if cur_val > 0:
+                valid = MERITS[merit]["dots"]
+                lower = [d for d in valid if d < cur_val]
+                if lower:
+                    new_val = lower[-1]
+                    refund = cur_val - new_val
+                    char.merits[merit] = new_val
+                    session["merit_dots_remaining"] = remaining + refund
+                else:
+                    # Remove entirely
+                    session["merit_dots_remaining"] = remaining + cur_val
+                    char.merits.pop(merit, None)
+        elif emoji == EDIT_SAVE:
+            session["_nav_active"] = False
+            session["nav_cursor"] = 0
+            _set_session(ctx.author.id, session)
+            await self._advance_to_backstory(ctx, session, char)
+            return
+
+        session["nav_cursor"] = cursor
+        _set_session(ctx.author.id, session)
+        await self._show_merit_nav(ctx, session, char)
 
     async def _send_with_reactions(self, ctx, embed: discord.Embed,
                                     options: list[str],
@@ -1020,26 +1408,9 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             session["step"] = "attr_assign_primary"
             session["attr_dots_remaining"] = 5
             session["attr_current_category"] = priorities[0]
+            session["nav_cursor"] = 0
             _set_session(ctx.author.id, session)
-
-            attrs = self._get_attrs_for_category(priorities[0])
-            embed = _make_embed(
-                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 {priorities[0]}",
-                (
-                    f"\U0001f947 **{priorities[0]}** (5 dots) > "
-                    f"\U0001f948 **{priorities[1]}** (4 dots) > "
-                    f"\U0001f949 **{priorities[2]}** (3 dots)\n\n"
-                    f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-                    f"{CAT_EMOJIS[priorities[0]]} Distribute **5 dots** among your **{priorities[0]}** attributes.\n"
-                    f"All start at 1. You're adding bonus dots on top (max 4 bonus = 5 total).\n\n"
-                    + "\n".join(f"\u2022 **{a}**: {_dot_display(1, 5)}" for a in attrs)
-                    + f"\n\n\U0001f4ac **How to assign:** `!wcc <Attribute> <dots>`\n"
-                    f"*Example:* `!wcc Intelligence 3` *(sets it to 1+3 = 4)*\n\n"
-                    f"\U0001f4b0 Dots remaining: **5**"
-                ),
-                step="attr_assign_primary",
-            )
-            await self._wizard_send(ctx, session, embed)
+            await self._show_attr_nav(ctx, session, char)
 
     def _get_attrs_for_category(self, category: str) -> list[str]:
         if category == "Mental":
@@ -1107,22 +1478,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.attributes[match] = 1 + dots
         _set_session(ctx.author.id, session)
 
-        # Show status embed
-        lines = [f"\u2705 **{match}** set to **{char.attributes[match]}**\n"]
-        lines.append(f"{CAT_EMOJIS[category]} **{category} Attributes:**")
-        for a in attrs:
-            lines.append(f"\u2022 {a}: {_dot_display(char.attributes[a], 5)} **({char.attributes[a]})**")
-        lines.append(f"\n\U0001f4b0 Dots remaining: **{session['attr_dots_remaining']}**")
-
-        if session["attr_dots_remaining"] == 0:
-            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue, or adjust any attribute.")
-
-        embed = _make_embed(
-            f"{STEP_EMOJIS['attributes']} Attributes \u2014 {category}",
-            "\n".join(lines),
-            step=session["step"],
-        )
-        await self._wizard_send(ctx, session, embed)
+        await self._show_attr_nav(ctx, session, char)
 
     async def _advance_attr_category(self, ctx, session, char: WoDCharacter):
         """Move to the next attribute category or to skills."""
@@ -1133,36 +1489,18 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             session["step"] = "attr_assign_secondary"
             session["attr_dots_remaining"] = 4
             session["attr_current_category"] = priorities[1]
+            session["nav_cursor"] = 0
+            session["_nav_active"] = False
             _set_session(ctx.author.id, session)
-            attrs = self._get_attrs_for_category(priorities[1])
-            embed = _make_embed(
-                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 {priorities[1]}",
-                (
-                    f"{CAT_EMOJIS[priorities[1]]} Distribute **4 dots** among your **{priorities[1]}** attributes:\n\n"
-                    + "\n".join(f"\u2022 **{a}**: {_dot_display(1, 5)}" for a in attrs)
-                    + f"\n\n\U0001f4ac `!wcc <Attribute> <dots>` \u2014 then `!wcc done` when finished.\n"
-                    f"\U0001f4b0 Dots remaining: **4**"
-                ),
-                step="attr_assign_secondary",
-            )
-            await self._wizard_send(ctx, session, embed)
+            await self._show_attr_nav(ctx, session, char)
         elif step == "attr_assign_secondary":
             session["step"] = "attr_assign_tertiary"
             session["attr_dots_remaining"] = 3
             session["attr_current_category"] = priorities[2]
+            session["nav_cursor"] = 0
+            session["_nav_active"] = False
             _set_session(ctx.author.id, session)
-            attrs = self._get_attrs_for_category(priorities[2])
-            embed = _make_embed(
-                f"{STEP_EMOJIS['attributes']} Step 8: Attributes \u2014 {priorities[2]}",
-                (
-                    f"{CAT_EMOJIS[priorities[2]]} Distribute **3 dots** among your **{priorities[2]}** attributes:\n\n"
-                    + "\n".join(f"\u2022 **{a}**: {_dot_display(1, 5)}" for a in attrs)
-                    + f"\n\n\U0001f4ac `!wcc <Attribute> <dots>` \u2014 then `!wcc done` when finished.\n"
-                    f"\U0001f4b0 Dots remaining: **3**"
-                ),
-                step="attr_assign_tertiary",
-            )
-            await self._wizard_send(ctx, session, embed)
+            await self._show_attr_nav(ctx, session, char)
         elif step == "attr_assign_tertiary":
             # Attributes done — move to skills
             session["step"] = "skill_priority"
@@ -1241,25 +1579,9 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             session["step"] = "skill_assign_primary"
             session["skill_dots_remaining"] = 11
             session["skill_current_category"] = priorities[0]
+            session["nav_cursor"] = 0
             _set_session(ctx.author.id, session)
-
-            skills = self._get_skills_for_category(priorities[0])
-            skill_list = "\n".join(f"\u2022 {s}" for s in skills)
-            embed = _make_embed(
-                f"{STEP_EMOJIS['skills']} Step 9: Skills \u2014 {priorities[0]}",
-                (
-                    f"\U0001f947 **{priorities[0]}** (11) > "
-                    f"\U0001f948 **{priorities[1]}** (7) > "
-                    f"\U0001f949 **{priorities[2]}** (4)\n\n"
-                    f"{CAT_EMOJIS[priorities[0]]} Distribute **11 dots** among **{priorities[0]}** skills (max 3 each):\n\n"
-                    f"{skill_list}\n\n"
-                    f"\U0001f4ac `!wcc <Skill> <dots>` \u2014 then `!wcc done` when finished.\n"
-                    f"*Example:* `!wcc Athletics 3`\n\n"
-                    f"\U0001f4b0 Dots remaining: **11**"
-                ),
-                step="skill_assign_primary",
-            )
-            await self._wizard_send(ctx, session, embed)
+            await self._show_skill_nav(ctx, session, char)
 
     async def _step_skill_assign(self, ctx, session, char: WoDCharacter, choice: str):
         """Handle skill dot assignment for current category."""
@@ -1314,22 +1636,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.skills[match] = dots
         _set_session(ctx.author.id, session)
 
-        lines = [f"\u2705 **{match}** set to **{dots}**\n"]
-        lines.append(f"{CAT_EMOJIS[category]} **{category} Skills:**")
-        for s in skills:
-            v = char.skills.get(s, 0)
-            lines.append(f"\u2022 {s}: {_dot_display(v, 3)} **({v})**")
-        lines.append(f"\n\U0001f4b0 Dots remaining: **{session['skill_dots_remaining']}**")
-
-        if session["skill_dots_remaining"] == 0:
-            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue.")
-
-        embed = _make_embed(
-            f"{STEP_EMOJIS['skills']} Skills \u2014 {category}",
-            "\n".join(lines),
-            step=session["step"],
-        )
-        await self._wizard_send(ctx, session, embed)
+        await self._show_skill_nav(ctx, session, char)
 
     async def _advance_skill_category(self, ctx, session, char: WoDCharacter):
         """Move to next skill category or to specialties."""
@@ -1347,22 +1654,10 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             session["step"] = next_s
             session["skill_dots_remaining"] = dots_map.get(step, 4)
             session["skill_current_category"] = priorities[idx]
+            session["nav_cursor"] = 0
+            session["_nav_active"] = False
             _set_session(ctx.author.id, session)
-
-            skills = self._get_skills_for_category(priorities[idx])
-            dots = session["skill_dots_remaining"]
-            skill_list = "\n".join(f"\u2022 {s}" for s in skills)
-            embed = _make_embed(
-                f"{STEP_EMOJIS['skills']} Step 9: Skills \u2014 {priorities[idx]}",
-                (
-                    f"{CAT_EMOJIS[priorities[idx]]} Distribute **{dots} dots** among **{priorities[idx]}** skills (max 3 each):\n\n"
-                    f"{skill_list}\n\n"
-                    f"\U0001f4ac `!wcc <Skill> <dots>` \u2014 then `!wcc done` when finished.\n"
-                    f"\U0001f4b0 Dots remaining: **{dots}**"
-                ),
-                step=next_s,
-            )
-            await self._wizard_send(ctx, session, embed)
+            await self._show_skill_nav(ctx, session, char)
         else:
             # Skills done — move to specialties
             session["step"] = "specialties"
@@ -1462,37 +1757,10 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["step"] = "disciplines"
         session["discipline_dots_remaining"] = 3
         session["clan_disciplines"] = clan_discs
+        session["nav_cursor"] = 0
+        session["_nav_active"] = False
         _set_session(ctx.author.id, session)
-
-        clan_data = get_clan_data(char.clan)
-        clan_emoji = clan_data.get("emoji", "\U0001f9db") if clan_data else "\U0001f9db"
-
-        disc_lines = []
-        for d in clan_discs:
-            data = get_discipline_data(d)
-            if data:
-                p1 = data["powers"].get(1, {})
-                p2 = data["powers"].get(2, {})
-                disc_lines.append(
-                    f"\U0001fa78 **{d}** \u2014 *{data['description']}*\n"
-                    f"> \u25cf **Lvl 1:** {p1.get('name', '?')} \u2014 {p1.get('description', '')}\n"
-                    f"> \u25cb **Lvl 2:** {p2.get('name', '?')} \u2014 {p2.get('description', '')}"
-                )
-
-        embed = _make_embed(
-            f"{STEP_EMOJIS['disciplines']} Step 11 of 14: Disciplines",
-            (
-                f"{clan_emoji} As a **{char.clan}**, your clan disciplines are:\n\n"
-                + "\n\n".join(disc_lines) + "\n\n"
-                "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n"
-                "Distribute **3 dots** (max **2** per discipline at creation).\n\n"
-                "\U0001f4ac `!wcc <Discipline> <dots>`\n"
-                "*Example:* `!wcc Celerity 2`\n\n"
-                "\U0001f4b0 Dots remaining: **3**"
-            ),
-            step="disciplines",
-        )
-        await self._wizard_send(ctx, session, embed)
+        await self._show_disc_nav(ctx, session, char)
 
     async def _step_disciplines(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("discipline_dots_remaining", 3)
@@ -1542,68 +1810,16 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             del char.disciplines[match]
         _set_session(ctx.author.id, session)
 
-        lines = [f"\u2705 **{match}** set to **{dots}**\n"]
-        lines.append("\U0001fa78 **Clan Disciplines:**")
-        for d in clan_discs:
-            v = char.disciplines.get(d, 0)
-            lines.append(f"\u2022 {d}: {_dot_display(v, 2)} **({v})**")
-        lines.append(f"\n\U0001f4b0 Dots remaining: **{session['discipline_dots_remaining']}**")
-
-        if session["discipline_dots_remaining"] == 0:
-            lines.append("\n\u2705 Type `!wcc done` to continue.")
-
-        embed = _make_embed(
-            f"{STEP_EMOJIS['disciplines']} Disciplines",
-            "\n".join(lines),
-            step="disciplines",
-        )
-        await self._wizard_send(ctx, session, embed)
+        await self._show_disc_nav(ctx, session, char)
 
     async def _advance_to_merits(self, ctx, session, char: WoDCharacter):
         """Move to merit selection."""
         session["step"] = "merits"
         session["merit_dots_remaining"] = MERIT_DOTS_AT_CREATION
+        session["nav_cursor"] = 0
+        session["_nav_active"] = False
         _set_session(ctx.author.id, session)
-
-        categories = ["Physical", "Mental", "Social", "Vampire"]
-        embeds = []
-
-        # Intro embed
-        intro_embed = _make_embed(
-            f"{STEP_EMOJIS['merits']} Step 12 of 14: Merits",
-            (
-                "Merits represent special advantages, backgrounds, and resources.\n"
-                f"You have **{MERIT_DOTS_AT_CREATION} dots** to spend.\n\n"
-                "\U0001f4ac `!wcc <Merit> <dots>` \u2014 e.g., `!wcc Resources 3`\n"
-                "Type `!wcc done` when finished (unspent dots are lost).\n"
-            ),
-            step="merits",
-        )
-        await self._wizard_send(ctx, session, intro_embed)
-
-        # Category embeds (sent as separate reference messages)
-        for cat in categories:
-            cat_merits = {k: v for k, v in MERITS.items() if v["category"] == cat}
-            if not cat_merits:
-                continue
-
-            cat_emoji = MERIT_CAT_EMOJIS.get(cat, "\u2b50")
-            lines = []
-            for name, data in sorted(cat_merits.items()):
-                dot_options = "/".join(str(d) for d in data["dots"])
-                lines.append(f"\u2022 **{name}** `({dot_options})` \u2014 {data['description']}")
-
-            embed = discord.Embed(
-                title=f"{cat_emoji} {cat} Merits",
-                description="\n".join(lines),
-                color=discord.Color.dark_gold(),
-            )
-            embeds.append(embed)
-
-        for embed in embeds:
-            await ctx.send(embed=embed)
-
-        await ctx.send(f"\U0001f4b0 Merit dots remaining: **{MERIT_DOTS_AT_CREATION}**")
+        await self._show_merit_nav(ctx, session, char)
 
     async def _step_merits(self, ctx, session, char: WoDCharacter, choice: str):
         remaining = session.get("merit_dots_remaining", 7)
@@ -1660,19 +1876,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         session["merit_dots_remaining"] = remaining - cost
         _set_session(ctx.author.id, session)
 
-        merit_list = "\n".join(f"\u2022 {k}: {_dot_display(v, 5)} **({v})**" for k, v in char.merits.items())
-        embed = _make_embed(
-            f"{STEP_EMOJIS['merits']} Merits",
-            (
-                f"\u2705 **{match}** set to **{dots}** dots.\n\n"
-                "\u2b50 **Current Merits:**\n"
-                f"{merit_list}\n\n"
-                f"\U0001f4b0 Dots remaining: **{session['merit_dots_remaining']}**\n"
-                "Type `!wcc done` when finished."
-            ),
-            step="merits",
-        )
-        await self._wizard_send(ctx, session, embed)
+        await self._show_merit_nav(ctx, session, char)
 
     async def _advance_to_backstory(self, ctx, session, char: WoDCharacter):
         session["step"] = "backstory"
