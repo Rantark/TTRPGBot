@@ -2,15 +2,25 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.9"
+__version__ = "1.9.0"
 __version_info__ = {
     'major': 1,
-    'minor': 8,
-    'patch': 9
+    'minor': 9,
+    'patch': 0
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.9.0** - March 14, 2026
+- Replaced emoji nav with text-based commands for character creation
+- D&D point buy: `!cc STR 15` or `!cc 1 15`, `!cc done` to confirm
+- D&D skills: toggle by name or number, auto-advances when all slots filled
+- WoD attributes/skills/disciplines: `!wcc <Name> <dots>` or `!wcc <#> <dots>`
+- WoD merits: set with `!wcc Resources 3`, remove with `!wcc Resources 0`
+- Number shorthand supported everywhere (e.g. `!wcc 1 3` for first item)
+- Auto-advance when all dots are assigned — no need to type "done"
+- More reliable across all Discord clients (no reaction rate-limit issues)
+
 **Version 1.8.9** - March 14, 2026
 - Emoji-based navigation for character creation dot assignment — no more typing needed
 - WoD: attributes, skills, disciplines, and merits all use ◀️▶️➕➖✅ reactions
