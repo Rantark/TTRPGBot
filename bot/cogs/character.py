@@ -139,40 +139,14 @@ class CharacterCog(commands.Cog, name="Character"):
 
     async def _wizard_send(self, ctx, session, embed: discord.Embed,
                            keep_reactions: bool = False):
-        """Update the wizard message in place, or send a new one.
+        """Send a new embed message for each creation step.
 
-        This keeps the creation flow in a single updating message.
-        If *keep_reactions* is True, only the embed is edited (no reaction
-        clearing) – used by the nav-emoji UI to avoid flicker.
+        Each step gets its own message so players can scroll back and
+        review previous selections.
         """
         # Add progress bar to footer
         step = session.get("step", "")
         embed.set_footer(text=_dnd_progress_bar(step))
-
-        wizard_msg = session.get("wizard_msg")
-        if wizard_msg:
-            try:
-                await wizard_msg.edit(embed=embed)
-                if not keep_reactions:
-                    # Clear old reactions — try bulk clear first, fall back to
-                    # removing the bot's own reactions one-by-one if that fails
-                    # (e.g. missing Manage Messages permission).
-                    cleared = False
-                    try:
-                        await wizard_msg.clear_reactions()
-                        cleared = True
-                    except discord.HTTPException:
-                        pass
-                    if not cleared:
-                        old_emojis = session.pop("_active_emojis", [])
-                        for em in old_emojis:
-                            try:
-                                await wizard_msg.remove_reaction(em, self.bot.user)
-                            except discord.HTTPException:
-                                pass
-                return wizard_msg
-            except discord.HTTPException:
-                pass
 
         msg = await ctx.send(embed=embed)
         session["wizard_msg"] = msg
