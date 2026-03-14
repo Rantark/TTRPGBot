@@ -2,15 +2,23 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.8"
+__version__ = "1.8.9"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 8
+    'patch': 9
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.9** - March 14, 2026
+- Emoji-based navigation for character creation dot assignment — no more typing needed
+- WoD: attributes, skills, disciplines, and merits all use ◀️▶️➕➖✅ reactions
+- D&D: point buy ability scores and class skill selection use emoji nav
+- ◀️/▶️ to browse items, ➕/➖ to adjust dots or toggle selections, ✅ to confirm
+- Merit browser shows description of highlighted merit while navigating
+- Text input (`!wcc`/`!cc`) still works as fallback at every step
+
 **Version 1.8.8** - March 14, 2026
 - Old emoji reactions now cleared when switching steps during character creation
 - Fallback removal if bot lacks Manage Messages permission (removes bot's own reactions individually)
