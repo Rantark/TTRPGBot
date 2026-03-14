@@ -2,15 +2,19 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.9.0"
+__version__ = "1.9.1"
 __version_info__ = {
     'major': 1,
     'minor': 9,
-    'patch': 0
+    'patch': 1
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.9.1** - March 14, 2026
+- Character creation now sends a new message per step instead of editing in place
+- Players can scroll back to review previous selections during creation
+
 **Version 1.9.0** - March 14, 2026
 - Replaced emoji nav with text-based commands for character creation
 - D&D point buy: `!cc STR 15` or `!cc 1 15`, `!cc done` to confirm
