@@ -271,26 +271,23 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
     # ── Attribute nav ──
 
     async def _show_attr_nav(self, ctx, session, char: WoDCharacter):
-        """Render the attribute nav embed and attach/update nav emojis."""
+        """Render the attribute assignment embed (text-based)."""
         category = session["attr_current_category"]
         attrs = self._get_attrs_for_category(category)
-        cursor = session.get("nav_cursor", 0)
         remaining = session["attr_dots_remaining"]
 
-        lines = [f"{CAT_EMOJIS[category]} **{category} Attributes**\n"]
+        lines = [f"{CAT_EMOJIS[category]} **{category} Attributes** (all start at 1)\n"]
         for i, a in enumerate(attrs):
-            marker = "\u25b8 " if i == cursor else "\u2002 "
-            hl = "**" if i == cursor else ""
             lines.append(
-                f"{marker}{hl}{a}{hl}: {_dot_display(char.attributes[a], 5)} ({char.attributes[a]})"
+                f"**{i + 1}.** {a}: {_dot_display(char.attributes[a], 5)} ({char.attributes[a]})"
             )
 
         lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
         if remaining == 0:
-            lines.append("\n\u2705 All dots assigned! Press \u2705 to continue.")
+            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue.")
         lines.append(
-            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
-            "\n*Or type `!wcc <Attribute> <dots>`*"
+            "\n\U0001f4ac **Type:** `!wcc <Name> <dots>` or `!wcc <#> <dots>`"
+            "\n\U0001f4a1 *e.g.* `!wcc Strength 3` *or* `!wcc 1 3`"
         )
 
         embed = _make_embed(
@@ -298,69 +295,31 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step=session["step"],
         )
-        await self._send_with_nav(ctx, session, embed, session["step"])
+        await self._wizard_send(ctx, session, embed)
 
     async def _nav_attr(self, ctx, session, char: WoDCharacter, emoji: str):
-        """Handle a nav-emoji press during attribute assignment."""
-        category = session["attr_current_category"]
-        attrs = self._get_attrs_for_category(category)
-        cursor = session.get("nav_cursor", 0)
-        remaining = session["attr_dots_remaining"]
-
-        if emoji == NAV_PREV:
-            cursor = (cursor - 1) % len(attrs)
-        elif emoji == NAV_NEXT:
-            cursor = (cursor + 1) % len(attrs)
-        elif emoji == EDIT_PLUS:
-            attr = attrs[cursor]
-            cur_val = char.attributes[attr]
-            if cur_val < 5 and remaining > 0:
-                char.attributes[attr] = cur_val + 1
-                session["attr_dots_remaining"] -= 1
-        elif emoji == EDIT_MINUS:
-            attr = attrs[cursor]
-            cur_val = char.attributes[attr]
-            if cur_val > 1:
-                char.attributes[attr] = cur_val - 1
-                session["attr_dots_remaining"] += 1
-        elif emoji == EDIT_SAVE:
-            if session["attr_dots_remaining"] > 0:
-                await ctx.send(
-                    f"\u26a0\ufe0f You still have **{session['attr_dots_remaining']}** dots to assign!"
-                )
-                return
-            session["_nav_active"] = False
-            session["nav_cursor"] = 0
-            _set_session(ctx.author.id, session)
-            await self._advance_attr_category(ctx, session, char)
-            return
-
-        session["nav_cursor"] = cursor
-        _set_session(ctx.author.id, session)
-        await self._show_attr_nav(ctx, session, char)
+        """Legacy nav-emoji handler — no longer used (text-based now)."""
+        pass
 
     # ── Skill nav ──
 
     async def _show_skill_nav(self, ctx, session, char: WoDCharacter):
-        """Render the skill nav embed and attach/update nav emojis."""
+        """Render the skill assignment embed (text-based)."""
         category = session["skill_current_category"]
         skills = self._get_skills_for_category(category)
-        cursor = session.get("nav_cursor", 0)
         remaining = session["skill_dots_remaining"]
 
         lines = [f"{CAT_EMOJIS[category]} **{category} Skills** (max 3 each)\n"]
         for i, s in enumerate(skills):
-            marker = "\u25b8 " if i == cursor else "\u2002 "
-            hl = "**" if i == cursor else ""
             v = char.skills.get(s, 0)
-            lines.append(f"{marker}{hl}{s}{hl}: {_dot_display(v, 3)} ({v})")
+            lines.append(f"**{i + 1}.** {s}: {_dot_display(v, 3)} ({v})")
 
         lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
         if remaining == 0:
-            lines.append("\n\u2705 All dots assigned! Press \u2705 to continue.")
+            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue.")
         lines.append(
-            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
-            "\n*Or type `!wcc <Skill> <dots>`*"
+            "\n\U0001f4ac **Type:** `!wcc <Name> <dots>` or `!wcc <#> <dots>`"
+            "\n\U0001f4a1 *e.g.* `!wcc Athletics 3` *or* `!wcc 1 3`"
         )
 
         embed = _make_embed(
@@ -368,70 +327,32 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step=session["step"],
         )
-        await self._send_with_nav(ctx, session, embed, session["step"])
+        await self._wizard_send(ctx, session, embed)
 
     async def _nav_skill(self, ctx, session, char: WoDCharacter, emoji: str):
-        """Handle a nav-emoji press during skill assignment."""
-        category = session["skill_current_category"]
-        skills = self._get_skills_for_category(category)
-        cursor = session.get("nav_cursor", 0)
-        remaining = session["skill_dots_remaining"]
-
-        if emoji == NAV_PREV:
-            cursor = (cursor - 1) % len(skills)
-        elif emoji == NAV_NEXT:
-            cursor = (cursor + 1) % len(skills)
-        elif emoji == EDIT_PLUS:
-            skill = skills[cursor]
-            cur_val = char.skills.get(skill, 0)
-            if cur_val < 3 and remaining > 0:
-                char.skills[skill] = cur_val + 1
-                session["skill_dots_remaining"] -= 1
-        elif emoji == EDIT_MINUS:
-            skill = skills[cursor]
-            cur_val = char.skills.get(skill, 0)
-            if cur_val > 0:
-                char.skills[skill] = cur_val - 1
-                session["skill_dots_remaining"] += 1
-        elif emoji == EDIT_SAVE:
-            if session["skill_dots_remaining"] > 0:
-                await ctx.send(
-                    f"\u26a0\ufe0f You still have **{session['skill_dots_remaining']}** dots to assign!"
-                )
-                return
-            session["_nav_active"] = False
-            session["nav_cursor"] = 0
-            _set_session(ctx.author.id, session)
-            await self._advance_skill_category(ctx, session, char)
-            return
-
-        session["nav_cursor"] = cursor
-        _set_session(ctx.author.id, session)
-        await self._show_skill_nav(ctx, session, char)
+        """Legacy nav-emoji handler — no longer used (text-based now)."""
+        pass
 
     # ── Discipline nav ──
 
     async def _show_disc_nav(self, ctx, session, char: WoDCharacter):
-        """Render discipline nav embed."""
+        """Render discipline assignment embed (text-based)."""
         clan_discs = session.get("clan_disciplines", [])
-        cursor = session.get("nav_cursor", 0)
         remaining = session.get("discipline_dots_remaining", 3)
 
         lines = ["\U0001fa78 **Clan Disciplines** (max 2 each)\n"]
         for i, d in enumerate(clan_discs):
-            marker = "\u25b8 " if i == cursor else "\u2002 "
-            hl = "**" if i == cursor else ""
             v = char.disciplines.get(d, 0)
             data = get_discipline_data(d)
             desc = f" \u2014 *{data['description']}*" if data else ""
-            lines.append(f"{marker}{hl}{d}{hl}: {_dot_display(v, 2)} ({v}){desc}")
+            lines.append(f"**{i + 1}.** {d}: {_dot_display(v, 2)} ({v}){desc}")
 
         lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
         if remaining == 0:
-            lines.append("\n\u2705 All dots assigned! Press \u2705 to continue.")
+            lines.append("\n\u2705 All dots assigned! Type `!wcc done` to continue.")
         lines.append(
-            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
-            "\n*Or type `!wcc <Discipline> <dots>`*"
+            "\n\U0001f4ac **Type:** `!wcc <Name> <dots>` or `!wcc <#> <dots>`"
+            "\n\U0001f4a1 *e.g.* `!wcc Celerity 2` *or* `!wcc 1 2`"
         )
 
         embed = _make_embed(
@@ -439,54 +360,17 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step="disciplines",
         )
-        await self._send_with_nav(ctx, session, embed, "disciplines")
+        await self._wizard_send(ctx, session, embed)
 
     async def _nav_discipline(self, ctx, session, char: WoDCharacter, emoji: str):
-        """Handle a nav-emoji press during discipline assignment."""
-        clan_discs = session.get("clan_disciplines", [])
-        cursor = session.get("nav_cursor", 0)
-        remaining = session.get("discipline_dots_remaining", 3)
-
-        if emoji == NAV_PREV:
-            cursor = (cursor - 1) % len(clan_discs)
-        elif emoji == NAV_NEXT:
-            cursor = (cursor + 1) % len(clan_discs)
-        elif emoji == EDIT_PLUS:
-            disc = clan_discs[cursor]
-            cur_val = char.disciplines.get(disc, 0)
-            if cur_val < 2 and remaining > 0:
-                char.disciplines[disc] = cur_val + 1
-                session["discipline_dots_remaining"] -= 1
-        elif emoji == EDIT_MINUS:
-            disc = clan_discs[cursor]
-            cur_val = char.disciplines.get(disc, 0)
-            if cur_val > 0:
-                char.disciplines[disc] = cur_val - 1
-                session["discipline_dots_remaining"] += 1
-                if char.disciplines.get(disc, 0) == 0:
-                    char.disciplines.pop(disc, None)
-        elif emoji == EDIT_SAVE:
-            if remaining > 0:
-                await ctx.send(
-                    f"\u26a0\ufe0f You still have **{remaining}** dots to assign!"
-                )
-                return
-            session["_nav_active"] = False
-            session["nav_cursor"] = 0
-            _set_session(ctx.author.id, session)
-            await self._advance_to_merits(ctx, session, char)
-            return
-
-        session["nav_cursor"] = cursor
-        _set_session(ctx.author.id, session)
-        await self._show_disc_nav(ctx, session, char)
+        """Legacy nav-emoji handler — no longer used (text-based now)."""
+        pass
 
     # ── Merit nav ──
 
     async def _show_merit_nav(self, ctx, session, char: WoDCharacter):
-        """Render merit nav embed – flat list grouped by category."""
+        """Render merit selection embed (text-based)."""
         all_merits = list(MERITS.keys())
-        cursor = session.get("nav_cursor", 0)
         remaining = session.get("merit_dots_remaining", MERIT_DOTS_AT_CREATION)
 
         # Group merits by category for display
@@ -500,19 +384,13 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             cat_emoji = MERIT_CAT_EMOJIS.get(cat, "\u2b50")
             lines.append(f"\n{cat_emoji} **{cat}**")
             for m in cat_merits:
-                marker = "\u25b8 " if flat_index == cursor else "\u2002 "
-                hl = "**" if flat_index == cursor else ""
                 v = char.merits.get(m, 0)
                 dot_opts = "/".join(str(d) for d in MERITS[m]["dots"])
-                max_dots = max(MERITS[m]["dots"])
+                sel = " \u2705" if v > 0 else ""
                 lines.append(
-                    f"{marker}{hl}{m}{hl}: {_dot_display(v, max_dots)} ({v})  `[{dot_opts}]`"
+                    f"**{flat_index + 1}.** {m} `[{dot_opts}]`{sel}"
                 )
                 flat_index += 1
-
-        # Show description of highlighted merit
-        highlighted = all_merits[cursor]
-        lines.append(f"\n\U0001f4d6 *{MERITS[highlighted]['description']}*")
 
         # Show current picks
         if char.merits:
@@ -521,8 +399,9 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         lines.append(f"\n\U0001f4b0 Dots remaining: **{remaining}**")
         lines.append(
-            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
-            "\n*Or type `!wcc <Merit> <dots>`*"
+            "\n\U0001f4ac **Type:** `!wcc <Name> <dots>` or `!wcc <#> <dots>`"
+            "\n\U0001f4a1 *e.g.* `!wcc Resources 3` *or* `!wcc 15 3`"
+            "\n*Type `!wcc done` or `!wcc skip` when finished.*"
         )
 
         embed = _make_embed(
@@ -530,55 +409,11 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             "\n".join(lines),
             step="merits",
         )
-        await self._send_with_nav(ctx, session, embed, "merits")
+        await self._wizard_send(ctx, session, embed)
 
     async def _nav_merit(self, ctx, session, char: WoDCharacter, emoji: str):
-        """Handle a nav-emoji press during merit selection."""
-        all_merits = list(MERITS.keys())
-        cursor = session.get("nav_cursor", 0)
-        remaining = session.get("merit_dots_remaining", MERIT_DOTS_AT_CREATION)
-
-        if emoji == NAV_PREV:
-            cursor = (cursor - 1) % len(all_merits)
-        elif emoji == NAV_NEXT:
-            cursor = (cursor + 1) % len(all_merits)
-        elif emoji == EDIT_PLUS:
-            merit = all_merits[cursor]
-            cur_val = char.merits.get(merit, 0)
-            valid = MERITS[merit]["dots"]
-            # Find next valid dot value
-            higher = [d for d in valid if d > cur_val]
-            if higher:
-                new_val = higher[0]
-                cost = new_val - cur_val
-                if cost <= remaining:
-                    char.merits[merit] = new_val
-                    session["merit_dots_remaining"] = remaining - cost
-        elif emoji == EDIT_MINUS:
-            merit = all_merits[cursor]
-            cur_val = char.merits.get(merit, 0)
-            if cur_val > 0:
-                valid = MERITS[merit]["dots"]
-                lower = [d for d in valid if d < cur_val]
-                if lower:
-                    new_val = lower[-1]
-                    refund = cur_val - new_val
-                    char.merits[merit] = new_val
-                    session["merit_dots_remaining"] = remaining + refund
-                else:
-                    # Remove entirely
-                    session["merit_dots_remaining"] = remaining + cur_val
-                    char.merits.pop(merit, None)
-        elif emoji == EDIT_SAVE:
-            session["_nav_active"] = False
-            session["nav_cursor"] = 0
-            _set_session(ctx.author.id, session)
-            await self._advance_to_backstory(ctx, session, char)
-            return
-
-        session["nav_cursor"] = cursor
-        _set_session(ctx.author.id, session)
-        await self._show_merit_nav(ctx, session, char)
+        """Legacy nav-emoji handler — no longer used (text-based now)."""
+        pass
 
     async def _send_with_reactions(self, ctx, embed: discord.Embed,
                                     options: list[str],
@@ -1446,23 +1281,32 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("\U0001f4ac Format: `!wcc <Attribute> <dots>` \u2014 e.g., `!wcc Strength 3`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Attribute> <dots>` or `!wcc <#> <dots>` \u2014 e.g., `!wcc 1 3`")
             return
 
         attr_name = parts[0].strip()
         try:
             dots = int(parts[1])
         except ValueError:
-            await ctx.send("\U0001f4ac Format: `!wcc <Attribute> <dots>` \u2014 dots must be a number.")
+            await ctx.send("\U0001f4ac Dots must be a number.")
             return
 
+        # Support numbered shorthand: !wcc 1 3  (set attr #1 to 3 bonus dots)
         match = None
-        for a in attrs:
-            if a.lower() == attr_name.lower() or a.lower().startswith(attr_name.lower()):
-                match = a
-                break
+        try:
+            idx = int(attr_name) - 1
+            if 0 <= idx < len(attrs):
+                match = attrs[idx]
+        except ValueError:
+            pass
+
         if not match:
-            await ctx.send(f"\u274c Unknown attribute. Choose from: {', '.join(attrs)}")
+            for a in attrs:
+                if a.lower() == attr_name.lower() or a.lower().startswith(attr_name.lower()):
+                    match = a
+                    break
+        if not match:
+            await ctx.send(f"\u274c Unknown attribute. Choose from: {', '.join(f'{i+1}. {a}' for i, a in enumerate(attrs))}")
             return
 
         already_assigned = char.attributes[match] - 1
@@ -1478,7 +1322,14 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.attributes[match] = 1 + dots
         _set_session(ctx.author.id, session)
 
-        await self._show_attr_nav(ctx, session, char)
+        # Auto-advance when all dots are used
+        if session["attr_dots_remaining"] == 0:
+            await self._show_attr_nav(ctx, session, char)
+            # Small delay so user can see the final state
+            await asyncio.sleep(1.5)
+            await self._advance_attr_category(ctx, session, char)
+        else:
+            await self._show_attr_nav(ctx, session, char)
 
     async def _advance_attr_category(self, ctx, session, char: WoDCharacter):
         """Move to the next attribute category or to skills."""
@@ -1599,28 +1450,37 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("\U0001f4ac Format: `!wcc <Skill> <dots>` \u2014 e.g., `!wcc Athletics 3`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Skill> <dots>` or `!wcc <#> <dots>` \u2014 e.g., `!wcc 1 3`")
             return
 
         skill_name = parts[0].strip()
         try:
             dots = int(parts[1])
         except ValueError:
-            await ctx.send("\U0001f4ac Format: `!wcc <Skill> <dots>` \u2014 dots must be a number.")
+            await ctx.send("\U0001f4ac Dots must be a number.")
             return
 
+        # Support numbered shorthand: !wcc 1 3
         match = None
-        for s in skills:
-            if s.lower() == skill_name.lower() or s.lower().startswith(skill_name.lower()):
-                match = s
-                break
+        try:
+            idx = int(skill_name) - 1
+            if 0 <= idx < len(skills):
+                match = skills[idx]
+        except ValueError:
+            pass
+
+        if not match:
+            for s in skills:
+                if s.lower() == skill_name.lower() or s.lower().startswith(skill_name.lower()):
+                    match = s
+                    break
         if not match:
             for s in skills:
                 if skill_name.lower() in s.lower():
                     match = s
                     break
         if not match:
-            await ctx.send(f"\u274c Unknown skill. Choose from: {', '.join(skills)}")
+            await ctx.send(f"\u274c Unknown skill. Choose from: {', '.join(f'{i+1}. {s}' for i, s in enumerate(skills))}")
             return
 
         already_assigned = char.skills.get(match, 0)
@@ -1636,7 +1496,13 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         char.skills[match] = dots
         _set_session(ctx.author.id, session)
 
-        await self._show_skill_nav(ctx, session, char)
+        # Auto-advance when all dots are used
+        if session["skill_dots_remaining"] == 0:
+            await self._show_skill_nav(ctx, session, char)
+            await asyncio.sleep(1.5)
+            await self._advance_skill_category(ctx, session, char)
+        else:
+            await self._show_skill_nav(ctx, session, char)
 
     async def _advance_skill_category(self, ctx, session, char: WoDCharacter):
         """Move to next skill category or to specialties."""
@@ -1775,7 +1641,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("\U0001f4ac Format: `!wcc <Discipline> <dots>` \u2014 e.g., `!wcc Celerity 2`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Discipline> <dots>` or `!wcc <#> <dots>` \u2014 e.g., `!wcc 1 2`")
             return
 
         disc_name = parts[0].strip()
@@ -1785,13 +1651,22 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             await ctx.send("\u274c Dots must be a number.")
             return
 
+        # Support numbered shorthand: !wcc 1 2
         match = None
-        for d in clan_discs:
-            if d.lower() == disc_name.lower() or d.lower().startswith(disc_name.lower()):
-                match = d
-                break
+        try:
+            idx = int(disc_name) - 1
+            if 0 <= idx < len(clan_discs):
+                match = clan_discs[idx]
+        except ValueError:
+            pass
+
         if not match:
-            await ctx.send(f"\u274c Choose from your clan disciplines: {', '.join(clan_discs)}")
+            for d in clan_discs:
+                if d.lower() == disc_name.lower() or d.lower().startswith(disc_name.lower()):
+                    match = d
+                    break
+        if not match:
+            await ctx.send(f"\u274c Choose from your clan disciplines: {', '.join(f'{i+1}. {d}' for i, d in enumerate(clan_discs))}")
             return
 
         already = char.disciplines.get(match, 0)
@@ -1810,7 +1685,13 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             del char.disciplines[match]
         _set_session(ctx.author.id, session)
 
-        await self._show_disc_nav(ctx, session, char)
+        # Auto-advance when all dots are used
+        if session["discipline_dots_remaining"] == 0:
+            await self._show_disc_nav(ctx, session, char)
+            await asyncio.sleep(1.5)
+            await self._advance_to_merits(ctx, session, char)
+        else:
+            await self._show_disc_nav(ctx, session, char)
 
     async def _advance_to_merits(self, ctx, session, char: WoDCharacter):
         """Move to merit selection."""
@@ -1830,7 +1711,7 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
 
         parts = choice.rsplit(None, 1)
         if len(parts) != 2:
-            await ctx.send("\U0001f4ac Format: `!wcc <Merit> <dots>` \u2014 e.g., `!wcc Resources 3`")
+            await ctx.send("\U0001f4ac Format: `!wcc <Merit> <dots>` or `!wcc <#> <dots>` \u2014 e.g., `!wcc 15 3`")
             return
 
         merit_name = parts[0].strip()
@@ -1841,11 +1722,21 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             return
 
         all_merits = get_merit_names()
+
+        # Support numbered shorthand: !wcc 15 3
         match = None
-        for m in all_merits:
-            if m.lower() == merit_name.lower():
-                match = m
-                break
+        try:
+            idx = int(merit_name) - 1
+            if 0 <= idx < len(all_merits):
+                match = all_merits[idx]
+        except ValueError:
+            pass
+
+        if not match:
+            for m in all_merits:
+                if m.lower() == merit_name.lower():
+                    match = m
+                    break
         if not match:
             for m in all_merits:
                 if m.lower().startswith(merit_name.lower()):
@@ -1861,19 +1752,24 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
             return
 
         merit_data = MERITS[match]
-        if dots not in merit_data["dots"]:
+        if dots not in merit_data["dots"] and dots != 0:
             valid = ", ".join(str(d) for d in merit_data["dots"])
-            await ctx.send(f"\u274c **{match}** can only be taken at: **{valid}** dots.")
+            await ctx.send(f"\u274c **{match}** can only be taken at: **{valid}** dots (or 0 to remove).")
             return
 
-        already = char.merits.get(match, 0)
-        cost = dots - already
-        if cost > remaining:
-            await ctx.send(f"\u274c Not enough dots. You have **{remaining}** remaining, need **{cost}**.")
-            return
-
-        char.merits[match] = dots
-        session["merit_dots_remaining"] = remaining - cost
+        if dots == 0:
+            # Remove the merit
+            already = char.merits.get(match, 0)
+            char.merits.pop(match, None)
+            session["merit_dots_remaining"] = remaining + already
+        else:
+            already = char.merits.get(match, 0)
+            cost = dots - already
+            if cost > remaining:
+                await ctx.send(f"\u274c Not enough dots. You have **{remaining}** remaining, need **{cost}**.")
+                return
+            char.merits[match] = dots
+            session["merit_dots_remaining"] = remaining - cost
         _set_session(ctx.author.id, session)
 
         await self._show_merit_nav(ctx, session, char)

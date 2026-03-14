@@ -345,19 +345,16 @@ class CharacterCog(commands.Cog, name="Character"):
     # ── Point Buy nav ──
 
     async def _show_point_buy_nav(self, ctx, session):
-        """Render point buy with nav emojis."""
+        """Render point buy embed (text-based)."""
         scores = session["point_buy_scores"]
         remaining = session["point_buy_remaining"]
-        cursor = session.get("nav_cursor", 0)
 
         lines = []
         for i, ab in enumerate(ABILITY_NAMES):
             score = scores[ab]
             mod = modifier_str(score)
             emoji = ABILITY_EMOJIS.get(ab, "")
-            marker = "\u25b8 " if i == cursor else "\u2002 "
-            hl = "**" if i == cursor else ""
-            lines.append(f"{marker}{emoji} {hl}{ABILITY_FULL_NAMES[ab]}{hl}: {score} ({mod})")
+            lines.append(f"**{i + 1}.** {emoji} {ABILITY_FULL_NAMES[ab]}: {score} ({mod})")
 
         cost_table = " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items())
         embed = discord.Embed(
@@ -366,67 +363,24 @@ class CharacterCog(commands.Cog, name="Character"):
                 f"\U0001f4b0 Budget remaining: **{remaining}**\n\n"
                 + "\n".join(lines)
                 + f"\n\nCost: {cost_table}"
-                + "\n\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795\u2796 Adjust  \u2502  \u2705 Done"
-                "\n*Or type `!cc <ability#> <score>`*"
+                + "\n\n\U0001f4ac **Type:** `!cc <Name> <score>` or `!cc <#> <score>`"
+                "\n\U0001f4a1 *e.g.* `!cc STR 15` *or* `!cc 1 15`"
+                "\n*Type `!cc done` when finished.*"
             ),
             color=discord.Color.blue(),
         )
-        await self._send_with_nav(ctx, session, embed, "point_buy")
+        await self._wizard_send(ctx, session, embed)
 
     async def _nav_point_buy(self, ctx, session, emoji: str):
-        """Handle a nav-emoji press during point buy."""
-        scores = session["point_buy_scores"]
-        cursor = session.get("nav_cursor", 0)
-        remaining = session["point_buy_remaining"]
-        char = session["char"]
-
-        if emoji == NAV_PREV:
-            cursor = (cursor - 1) % 6
-        elif emoji == NAV_NEXT:
-            cursor = (cursor + 1) % 6
-        elif emoji == EDIT_PLUS:
-            ab = ABILITY_NAMES[cursor]
-            old_score = scores[ab]
-            if old_score < 15:
-                new_score = old_score + 1
-                cost_diff = POINT_BUY_COSTS[new_score] - POINT_BUY_COSTS[old_score]
-                if cost_diff <= remaining:
-                    scores[ab] = new_score
-                    session["point_buy_remaining"] = remaining - cost_diff
-        elif emoji == EDIT_MINUS:
-            ab = ABILITY_NAMES[cursor]
-            old_score = scores[ab]
-            if old_score > 8:
-                new_score = old_score - 1
-                refund = POINT_BUY_COSTS[old_score] - POINT_BUY_COSTS[new_score]
-                scores[ab] = new_score
-                session["point_buy_remaining"] = remaining + refund
-        elif emoji == EDIT_SAVE:
-            remaining = session["point_buy_remaining"]
-            if remaining < 0:
-                await ctx.send(f"You're over budget by {abs(remaining)} points!")
-                return
-            for ab in ABILITY_NAMES:
-                char.abilities[ab] = scores[ab]
-            for ab, bonus in char.racial_bonuses.items():
-                char.abilities[ab] += bonus
-            session["_nav_active"] = False
-            session["nav_cursor"] = 0
-            _set_session(ctx.author.id, session)
-            await self._show_abilities_and_advance_to_background(ctx, session, char)
-            return
-
-        session["nav_cursor"] = cursor
-        _set_session(ctx.author.id, session)
-        await self._show_point_buy_nav(ctx, session)
+        """Legacy nav-emoji handler — no longer used (text-based now)."""
+        pass
 
     # ── Skill selection nav ──
 
     async def _show_skills_nav(self, ctx, session):
-        """Render skill selection with nav toggle emojis."""
+        """Render skill selection embed (text-based)."""
         available = session["available_skills"]
         num_needed = session["num_skills"]
-        cursor = session.get("nav_cursor", 0)
         picks = session.get("skill_picks", [])
         char = session["char"]
 
@@ -434,15 +388,14 @@ class CharacterCog(commands.Cog, name="Character"):
         lines = [f"Already proficient: {already}",
                  f"Choose **{num_needed}** skills (**{num_needed - len(picks)}** remaining):\n"]
         for i, sk in enumerate(available):
-            marker = "\u25b8 " if i == cursor else "\u2002 "
             checked = "\u2705" if sk in picks else "\u2b1c"
-            hl = "**" if i == cursor else ""
             ab = SKILLS.get(sk, "")
-            lines.append(f"{marker}{checked} {hl}{sk}{hl} ({ab})")
+            lines.append(f"**{i + 1}.** {checked} {sk} ({ab})")
 
         lines.append(
-            "\n\u25c0\ufe0f\u25b6\ufe0f Navigate  \u2502  \u2795 Toggle  \u2502  \u2705 Done"
-            "\n*Or type `!cc 1 3` or `!cc Athletics Perception`*"
+            "\n\U0001f4ac **Type:** skill names or numbers to toggle"
+            "\n\U0001f4a1 *e.g.* `!cc Athletics Perception` *or* `!cc 1 3`"
+            "\n*Type `!cc done` when finished.*"
         )
 
         embed = discord.Embed(
@@ -450,60 +403,11 @@ class CharacterCog(commands.Cog, name="Character"):
             description="\n".join(lines),
             color=discord.Color.blue(),
         )
-        await self._send_with_nav(ctx, session, embed, "skills")
+        await self._wizard_send(ctx, session, embed)
 
     async def _nav_skills(self, ctx, session, emoji: str):
-        """Handle a nav-emoji press during skill selection."""
-        available = session["available_skills"]
-        num_needed = session["num_skills"]
-        cursor = session.get("nav_cursor", 0)
-        picks = session.get("skill_picks", [])
-        char = session["char"]
-
-        if emoji == NAV_PREV:
-            cursor = (cursor - 1) % len(available)
-        elif emoji == NAV_NEXT:
-            cursor = (cursor + 1) % len(available)
-        elif emoji in (EDIT_PLUS, EDIT_MINUS):
-            # Toggle the skill at cursor
-            sk = available[cursor]
-            if sk in picks:
-                picks.remove(sk)
-            elif len(picks) < num_needed:
-                picks.append(sk)
-        elif emoji == EDIT_SAVE:
-            if len(picks) != num_needed:
-                await ctx.send(f"Choose exactly **{num_needed}** skills ({len(picks)} selected).")
-                return
-            for skill in picks:
-                if skill not in char.skill_proficiencies:
-                    char.skill_proficiencies.append(skill)
-            session["_nav_active"] = False
-            session["nav_cursor"] = 0
-            _set_session(ctx.author.id, session)
-            # Advance to equipment (same as existing _step_skills)
-            cls_data = session["class_data"]
-            equip_options = cls_data.get("starting_equipment", [])
-            choices = []
-            fixed_items = []
-            for item in equip_options:
-                if isinstance(item, list):
-                    choices.append(item)
-                else:
-                    fixed_items.append(item)
-            session["equip_choices"] = choices
-            session["equip_fixed"] = fixed_items
-            session["equip_picks"] = []
-            session["equip_index"] = 0
-            session["step"] = "equipment"
-            _set_session(ctx.author.id, session)
-            await self._show_equipment_choice(ctx, session, char)
-            return
-
-        session["nav_cursor"] = cursor
-        session["skill_picks"] = picks
-        _set_session(ctx.author.id, session)
-        await self._show_skills_nav(ctx, session)
+        """Legacy nav-emoji handler — no longer used (text-based now)."""
+        pass
 
     async def _dispatch_step(self, ctx, choice: str):
         """Route a creation choice to the appropriate step handler."""
@@ -1221,25 +1125,38 @@ class CharacterCog(commands.Cog, name="Character"):
 
         parts = choice.replace(",", " ").split()
         if len(parts) != 2:
-            await ctx.send("Format: `!cc <ability#> <score>` or `!cc done` when finished.")
+            await ctx.send("Format: `!cc <Name> <score>` or `!cc <#> <score>` \u2014 e.g., `!cc STR 15` or `!cc 1 15`")
             return
 
+        ab_name = parts[0].strip()
         try:
-            ab_idx = int(parts[0]) - 1
             new_score = int(parts[1])
         except ValueError:
-            await ctx.send("Format: `!cc <ability#> <score>` (e.g., `!cc 1 15`)")
+            await ctx.send("Score must be a number (8-15).")
             return
 
-        if ab_idx < 0 or ab_idx >= 6:
-            await ctx.send("Ability number must be 1-6.")
+        # Resolve ability by number or name
+        ab = None
+        try:
+            ab_idx = int(ab_name) - 1
+            if 0 <= ab_idx < 6:
+                ab = ABILITY_NAMES[ab_idx]
+        except ValueError:
+            # Try matching by name (STR, Strength, etc.)
+            ab_lower = ab_name.lower()
+            for a in ABILITY_NAMES:
+                if a.lower() == ab_lower or ABILITY_FULL_NAMES[a].lower().startswith(ab_lower):
+                    ab = a
+                    break
+
+        if not ab:
+            await ctx.send(f"Unknown ability. Use a number (1-6) or name: {', '.join(ABILITY_NAMES)}")
             return
         if new_score not in POINT_BUY_COSTS:
             await ctx.send(f"Score must be 8-15. Cost table: " +
                            " | ".join(f"{s}={c}" for s, c in POINT_BUY_COSTS.items()))
             return
 
-        ab = ABILITY_NAMES[ab_idx]
         old_score = session["point_buy_scores"][ab]
         old_cost = POINT_BUY_COSTS[old_score]
         new_cost = POINT_BUY_COSTS[new_score]
@@ -1322,47 +1239,83 @@ class CharacterCog(commands.Cog, name="Character"):
     async def _step_skills(self, ctx, session, char: Character, choice: str):
         available = session["available_skills"]
         num_needed = session["num_skills"]
+        picks = session.get("skill_picks", [])
+
+        if choice.strip().lower() == "done":
+            if len(picks) != num_needed:
+                await ctx.send(f"Choose exactly **{num_needed}** skills ({len(picks)} selected).")
+                return
+            for skill in picks:
+                if skill not in char.skill_proficiencies:
+                    char.skill_proficiencies.append(skill)
+            # Advance to equipment selection
+            cls_data = session["class_data"]
+            equip_options = cls_data.get("starting_equipment", [])
+            choices = []
+            fixed_items = []
+            for item in equip_options:
+                if isinstance(item, list):
+                    choices.append(item)
+                else:
+                    fixed_items.append(item)
+            session["equip_choices"] = choices
+            session["equip_fixed"] = fixed_items
+            session["equip_picks"] = []
+            session["equip_index"] = 0
+            session["step"] = "equipment"
+            _set_session(ctx.author.id, session)
+            await self._show_equipment_choice(ctx, session, char)
+            return
+
         parts = choice.replace(",", " ").split()
 
-        picks = []
+        # Toggle skills incrementally
+        toggled = []
         for part in parts:
             part = part.strip()
             resolved = self._resolve_choice(part, available)
             if resolved:
-                picks.append(resolved)
+                toggled.append(resolved)
 
-        # Deduplicate
-        picks = list(dict.fromkeys(picks))
-
-        if len(picks) != num_needed:
-            await ctx.send(f"Choose exactly **{num_needed}** skills. Try again.")
+        if not toggled:
+            await ctx.send(f"Unknown skill(s). Use numbers (1-{len(available)}) or skill names.")
             return
 
-        for skill in picks:
-            if skill not in char.skill_proficiencies:
-                char.skill_proficiencies.append(skill)
-
-        # Advance to equipment selection
-        cls_data = session["class_data"]
-        equip_options = cls_data.get("starting_equipment", [])
-
-        # Separate choices (lists) from fixed items (strings)
-        choices = []
-        fixed_items = []
-        for item in equip_options:
-            if isinstance(item, list):
-                choices.append(item)
+        for sk in toggled:
+            if sk in picks:
+                picks.remove(sk)
             else:
-                fixed_items.append(item)
-
-        session["equip_choices"] = choices
-        session["equip_fixed"] = fixed_items
-        session["equip_picks"] = []
-        session["equip_index"] = 0
-        session["step"] = "equipment"
+                picks.append(sk)
+        # Deduplicate
+        picks = list(dict.fromkeys(picks))
+        session["skill_picks"] = picks
         _set_session(ctx.author.id, session)
 
-        await self._show_equipment_choice(ctx, session, char)
+        # Auto-advance when exactly the right number are picked
+        if len(picks) == num_needed:
+            await self._show_skills_nav(ctx, session)
+            await asyncio.sleep(1.5)
+            for skill in picks:
+                if skill not in char.skill_proficiencies:
+                    char.skill_proficiencies.append(skill)
+            cls_data = session["class_data"]
+            equip_options = cls_data.get("starting_equipment", [])
+            choices = []
+            fixed_items = []
+            for item in equip_options:
+                if isinstance(item, list):
+                    choices.append(item)
+                else:
+                    fixed_items.append(item)
+            session["equip_choices"] = choices
+            session["equip_fixed"] = fixed_items
+            session["equip_picks"] = []
+            session["equip_index"] = 0
+            session["step"] = "equipment"
+            _set_session(ctx.author.id, session)
+            await self._show_equipment_choice(ctx, session, char)
+        else:
+            await self._show_skills_nav(ctx, session)
 
     async def _show_equipment_choice(self, ctx, session, char: Character):
         """Show the current equipment choice or advance past equipment."""
