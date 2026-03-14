@@ -2,15 +2,20 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.8.7"
+__version__ = "1.8.8"
 __version_info__ = {
     'major': 1,
     'minor': 8,
-    'patch': 7
+    'patch': 8
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.8.8** - March 14, 2026
+- Old emoji reactions now cleared when switching steps during character creation
+- Fallback removal if bot lacks Manage Messages permission (removes bot's own reactions individually)
+- Edit mode (D&D and WoD) clears and re-adds correct reactions when navigating pages with ◀️▶️
+
 **Version 1.8.7** - March 13, 2026
 - New !testmode command — spin up a temporary test campaign with pre-built characters
 - Choose D&D 5e or WoD: !testmode dnd / !testmode wod (or pick interactively)
