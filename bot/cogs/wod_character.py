@@ -167,10 +167,22 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         if wizard_msg:
             try:
                 await wizard_msg.edit(embed=embed)
+                # Clear old reactions — try bulk clear first, fall back to
+                # removing the bot's own reactions one-by-one if that fails
+                # (e.g. missing Manage Messages permission).
+                cleared = False
                 try:
                     await wizard_msg.clear_reactions()
+                    cleared = True
                 except discord.HTTPException:
                     pass
+                if not cleared:
+                    old_emojis = session.pop("_active_emojis", [])
+                    for em in old_emojis:
+                        try:
+                            await wizard_msg.remove_reaction(em, self.bot.user)
+                        except discord.HTTPException:
+                            pass
                 return wizard_msg
             except discord.HTTPException:
                 pass
@@ -204,11 +216,16 @@ class WoDCharacterCog(commands.Cog, name="WoD Character"):
         else:
             msg = await ctx.send(embed=embed)
 
+        # Add reactions and track them so _wizard_send can remove them later
         for emoji in emojis:
             try:
                 await msg.add_reaction(emoji)
             except discord.HTTPException:
                 pass
+        session = _get_session(ctx.author.id)
+        if session:
+            session["_active_emojis"] = list(emojis)
+            _set_session(ctx.author.id, session)
 
         async def _listen():
             def check(reaction, user):

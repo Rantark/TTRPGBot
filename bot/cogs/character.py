@@ -150,11 +150,22 @@ class CharacterCog(commands.Cog, name="Character"):
         if wizard_msg:
             try:
                 await wizard_msg.edit(embed=embed)
-                # Clear old reactions
+                # Clear old reactions — try bulk clear first, fall back to
+                # removing the bot's own reactions one-by-one if that fails
+                # (e.g. missing Manage Messages permission).
+                cleared = False
                 try:
                     await wizard_msg.clear_reactions()
+                    cleared = True
                 except discord.HTTPException:
                     pass
+                if not cleared:
+                    old_emojis = session.pop("_active_emojis", [])
+                    for em in old_emojis:
+                        try:
+                            await wizard_msg.remove_reaction(em, self.bot.user)
+                        except discord.HTTPException:
+                            pass
                 return wizard_msg
             except discord.HTTPException:
                 pass
@@ -224,12 +235,16 @@ class CharacterCog(commands.Cog, name="Character"):
             embed.set_footer(text=footer_text)
             msg = await ctx.send(embed=embed)
 
-        # Add reactions
+        # Add reactions and track them so _wizard_send can remove them later
         for emoji in emojis:
             try:
                 await msg.add_reaction(emoji)
             except discord.HTTPException:
                 pass
+        session = _get_session(ctx.author.id)
+        if session:
+            session["_active_emojis"] = list(emojis)
+            _set_session(ctx.author.id, session)
 
         # Start background reaction listener
         async def _listen():
