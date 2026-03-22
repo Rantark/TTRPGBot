@@ -1,6 +1,6 @@
 # D&D 5e Discord Bot — AI Dungeon Master
 
-A production-ready Discord bot for playing **Dungeons & Dragons 5th Edition** where **Claude** (via the Anthropic API) serves as the Dungeon Master. Full interactive character creation, dice rolling, combat management, RP scene coordination, and AI-driven storytelling — all inside Discord.
+A production-ready Discord bot for playing **Dungeons & Dragons 5th Edition** and **World of Darkness** (Vampire: The Requiem) where **Claude** (via the Anthropic API) serves as the Dungeon Master / Storyteller. Full interactive character creation, dice rolling, combat management, RP scene coordination, and AI-driven storytelling — all inside Discord.
 
 Claude handles **all** narration, NPC dialogue, world-building, and rules adjudication. No pre-programmed responses. Every game is unique.
 
@@ -23,7 +23,11 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
   - [Combat & Tactical Map](#combat--tactical-map)
   - [Progression & Resources](#progression--resources)
   - [Spells & Spellcasting](#spells--spellcasting)
+  - [WoD Character Creation & Sheets](#wod-character-creation--sheets)
+  - [WoD Dice](#wod-dice)
   - [Utility](#utility)
+  - [API Balance & Cost Tracking](#api-balance--cost-tracking)
+  - [Test Mode](#test-mode)
   - [Bot Info & Admin](#bot-info--admin)
 - [Character Creation Walkthrough](#character-creation-walkthrough)
 - [RP Scene Coordination](#rp-scene-coordination)
@@ -51,6 +55,7 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 
 - **AI Dungeon Master** — Claude narrates the story, roleplays NPCs, manages encounters, and adjudicates rules
 - **Full D&D 5e Character Creation** — All PHB races (with subraces), all 12 classes, 13 backgrounds, 3 ability score methods (roll, standard array, point buy), gender selection, starting equipment, weapon selection, spell/cantrip selection for casters, backstory. **Private DM-based flow** so multiple players can create simultaneously with step-by-step help text
+- **World of Darkness Support** — Vampire: The Requiem character creation (clans, covenants, disciplines, merits), Vitae/Humanity/Willpower tracking, WoD dice pools, and dedicated character sheets
 - **Campaign System** — Pitch/vote on concepts, `!suggestcampaign` for AI-generated ideas, setup phase for character creation, game threads to keep campaigns organized
 - **RP Scene Coordination** — Player actions are queued and bundled so the DM responds to everyone at once (no overlapping storylines)
 - **Combat System** — Initiative tracking, turn order, turn locking, NPC management, ASCII tactical map
@@ -68,6 +73,11 @@ Claude handles **all** narration, NPC dialogue, world-building, and rules adjudi
 - **`!commands` via DM** — Help text is sent to your DMs to keep game chat clean
 - **Prompt Caching** — Anthropic prompt caching reduces API costs by up to 90% on repeat calls
 - **Auto-Update System** — Background update checker (every 24 hours), `!update` to pull from GitHub and restart, `!restart`/`!shutdown` owner commands, version tracking
+- **API Balance Tracking** — Monitor API spending, view call history, set balance limits
+- **Test Mode** — Spin up test campaigns with pre-built characters to try out the bot instantly
+- **Story Export** — Generate narrative retellings of your campaign with `!exportstory`
+- **Character Editing** — Modify characters after creation with `!dndedit` (D&D) or `!wodedit` (WoD)
+- **AFK & Held Actions** — Mark yourself AFK for auto-pass, or hold your action to wait for others
 - **Persistent Storage** — Campaigns save to JSON files, survive bot restarts
 - **Async-Friendly** — Designed for play-by-post (3-6 players responding over hours or days)
 
@@ -312,12 +322,20 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!pitches` | Anyone | View all proposed pitches |
 | `!vote <#>` | Anyone | Vote for a pitch |
 | `!selectpitch <#>` | DM | Select a pitch and move to setup phase |
+| `!randompitch` | DM | Select a random pitch |
+| `!deletepitch [#]` | Author/DM | Delete a pitch (your own, or DM can delete any) |
 | `!setlevel <level>` | DM | Set starting level for new characters (1-20) |
 | `!loot @player <item>` | DM | Give item/gold to a player's inventory |
 | `!giveall <item>` | DM | Give item/gold to all players |
 | `!startcampaign` | DM | Begin the adventure — creates a game thread |
 | `!endcampaign` | DM | End the campaign — archives the game thread |
+| `!forceend` | Admin | Force end a campaign if the DM is absent |
 | `!campaigninfo` | Anyone | View campaign status and player list |
+| `!setforum [#channel]` | Admin | Set forum channel for campaign posts |
+| `!clearforum` | Admin | Remove forum setting (use threads instead) |
+| `!debugforum` | Admin | Debug forum config and permissions |
+| `!setpace <async\|live>` | DM/Admin | Set campaign pace (async or live) |
+| `!exportstory` | Anyone | Generate a narrative retelling of the campaign (alias: `!story`) |
 
 ### Character Creation & Sheets
 
@@ -344,6 +362,7 @@ Type `!commands` in Discord to see these categories, or `!commands <category>` f
 | `!equip none` | Remove armor; `!equip no shield` to remove shield |
 | `!backstory` | View your character's backstory |
 | `!backstory <text>` | Set or update your backstory |
+| `!dndedit` | Edit your character interactively (aliases: `!dedit`, `!editchar`) |
 
 ### Gameplay (RP Scenes)
 
@@ -358,14 +377,20 @@ During non-combat play, actions are **queued** until all players have submitted 
 | `!inspect <target>` | Examine something closely *(queued)* |
 | `!talk <NPC>` | Speak to an NPC — Claude roleplays them *(queued)* |
 | `!pass` | Do nothing this round |
+| `!hold` | Hold your action — wait to see what happens before committing |
+| `!afk` | Mark yourself as AFK (auto-pass each round) |
 | `!undo` | Cancel your pending action before the round resolves |
 | `!pending` | See who hasn't acted yet |
+| `!remind` | Ping idle players who haven't acted (1-hour cooldown) |
 | `!resolve` | *(DM)* Force the round to resolve early |
 | `!dm <prompt>` | *(DM)* Prompt Claude to narrate a scene or event |
 | `!dm-whisper @player <msg>` | *(DM)* Send a private message to a player via DM |
 | `!ask <question>` | Ask the DM a rules question *(does NOT advance the story)* |
 | `!rewind [prompt]` | *(DM)* Undo the last AI response; optional re-prompt |
 | `!ooc <message>` | Out-of-character chat *(not queued, DM doesn't respond)* |
+| `!introll [adv\|dis]` | Roll initiative immediately and report to the DM |
+| `!rollresults <reason> <result>` | Report a dice roll result to the DM (alias: `!rr`) |
+| `!cleanup [limit]` | Delete bot status messages from the channel |
 
 ### Dice & Rolls
 
@@ -384,6 +409,16 @@ All dice commands support **advantage** and **disadvantage** — just add `adv` 
 `!spellattack` aliases: `!sa`, `!spellatk`
 
 Advantage rolls the d20 twice and takes the higher result. Disadvantage takes the lower. Both individual rolls are shown. Critical hits (nat 20) automatically roll extra damage dice.
+
+### WoD Dice
+
+World of Darkness dice pools use d10s with different success/failure rules.
+
+| Command | Example | Description |
+|---|---|---|
+| `!pool <args>` | `!pool 6` | Roll a WoD dice pool (aliases: `!dicepool`, `!dp`) |
+| `!wodroll <args>` | `!wodroll 5` | WoD standard roll (alias: `!wr`) |
+| `!wodintroll <args>` | `!wodintroll 4` | WoD initiative roll (alias: `!wir`) |
 
 ### Combat & Tactical Map
 
@@ -442,6 +477,43 @@ Advantage rolls the d20 twice and takes the higher result. Disadvantage takes th
 | `!cast <spell> <level>` | Cast a spell at a specific slot level |
 
 Spell slots are tracked per D&D 5e rules: full casters (Bard, Cleric, Druid, Sorcerer, Wizard), half casters (Paladin, Ranger), and pact casters (Warlock) each have their own slot progression. Warlock pact magic slots recover on short rest; all other slots recover on long rest.
+
+### WoD Character Creation & Sheets
+
+Commands for **World of Darkness** (Vampire: The Requiem) character creation and management.
+
+| Command | Description |
+|---|---|
+| `!createwod` | Start WoD character creation (alias: `!wodcreate`) |
+| `!wcc <choice>` | Make a choice during WoD creation (use in DMs) |
+| `!wodsheet` | Display your WoD character sheet (alias: `!wsheet`) |
+| `!vitae [+/-amount]` | View or spend Vitae (alias: `!blood`) |
+| `!humanity` | Display your Humanity rating |
+| `!willpower [+/-amount]` | View or spend Willpower (alias: `!wp`) |
+| `!wodedit` | Edit your WoD character interactively (aliases: `!wedit`, `!editwod`) |
+
+### API Balance & Cost Tracking
+
+Track your Anthropic API spending and balance.
+
+| Command | Who | Description |
+|---|---|---|
+| `!balance` | Anyone | Show current API balance and spending (aliases: `!bal`, `!apicost`) |
+| `!usage [count]` | Anyone | Show recent API call history (default: last 10) |
+| `!setbalance <amount>` | Admin | Set the initial API balance |
+| `!addfunds <amount>` | Admin | Add funds to the balance after topping up |
+
+### Test Mode
+
+Quickly spin up test campaigns with pre-built characters for trying out the bot.
+
+| Command | Description |
+|---|---|
+| `!testmode [dnd\|wod]` | Start a test campaign with pre-built characters (alias: `!test`) |
+| `!testcreate [dnd\|wod]` | Create a test character (alias: `!testcc`) |
+| `!testchar [template]` | Switch between pre-built test characters (alias: `!switchchar`) |
+| `!testlist` | List available test character templates |
+| `!endtest` | End the test campaign |
 
 ### Utility
 
@@ -1427,13 +1499,16 @@ TTRPGBot/
 │   ├── dice.py               # Dice rolling engine (notation parsing, ability checks, adv/dis)
 │   ├── storage.py            # Persistent JSON file storage per campaign
 │   ├── cogs/
-│   │   ├── campaign.py       # !newcampaign, !suggestcampaign, !pitch, !startcampaign, !loot, threads
-│   │   ├── character.py      # !createchar, !sheet, !ac/stats/skills/saves/weapons, !equip, !use, !give
-│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !undo, !rewind, RP queue
+│   │   ├── campaign.py       # !newcampaign, !suggestcampaign, !pitch, !startcampaign, !loot, !exportstory
+│   │   ├── character.py      # !createchar, !sheet, !ac/stats/skills/saves/weapons, !equip, !use, !give, !dndedit
+│   │   ├── wod_character.py  # !createwod, !wodsheet, !vitae, !humanity, !willpower, !wodedit
+│   │   ├── gameplay.py       # !action, !ic, !emote, !look, !ask, !dm, !undo, !rewind, !afk, !hold, RP queue
 │   │   ├── combat.py         # !combatstart, !initiative, !next, !map, !place, !move
 │   │   ├── progression.py    # !rest, !hp, !xp, !levelup, !deathsave, !stabilize, !hitdie, !feat, !modifier
 │   │   ├── spells.py         # !spells, !slots, !learn, !prepare, !cast, !forget
 │   │   ├── utility.py        # !recap, !status, !clues, !npcs, !whisper, !commands (via DM)
+│   │   ├── balance.py        # !balance, !usage, !setbalance, !addfunds
+│   │   ├── testmode.py       # !testmode, !testcreate, !testchar, !testlist, !endtest
 │   │   └── info.py           # !ping, !version, !botinfo, !restart, !update, !shutdown
 │   ├── models/
 │   │   ├── character.py      # Character class — stats, abilities, spells, weapons, serialization
