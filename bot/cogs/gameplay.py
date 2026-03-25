@@ -1260,12 +1260,22 @@ class GameplayCog(commands.Cog, name="Gameplay"):
         char = campaign.get_character(player_id)
         char_summary = char.short_summary() if char else ""
 
-        async with ctx.typing():
-            response = await self.bot.dm_engine.get_rules_response(
-                campaign, question, ctx.author.display_name, char_summary,
-            )
+        try:
+            async with ctx.typing():
+                response = await self._ask_dm_inner(campaign, question, ctx, char_summary)
+        except discord.errors.HTTPException as e:
+            if e.status == 429 or e.code == 40062:
+                response = await self._ask_dm_inner(campaign, question, ctx, char_summary)
+            else:
+                raise
 
         await self._send_long(ctx, f"**DM (Rules Q&A):**\n{response}")
+
+    async def _ask_dm_inner(self, campaign, question: str, ctx: commands.Context, char_summary: str) -> str:
+        """Fetch a rules response from the DM engine (no typing indicator)."""
+        return await self.bot.dm_engine.get_rules_response(
+            campaign, question, ctx.author.display_name, char_summary,
+        )
 
     # ------------------------------------------------------------------
     # Dice commands (immediate, never queued)

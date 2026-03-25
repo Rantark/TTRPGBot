@@ -2,15 +2,19 @@
 Version information for TTRPGBot
 """
 
-__version__ = "1.9.1"
+__version__ = "1.9.2"
 __version_info__ = {
     'major': 1,
     'minor': 9,
-    'patch': 1
+    'patch': 2
 }
 
 # Update this with each release
 RELEASE_NOTES = """
+**Version 1.9.2** - March 25, 2026
+- Fixed !ask command crashing on Discord typing indicator rate limits (HTTP 429)
+- Typing indicator is now gracefully skipped when rate-limited; AI response still completes
+
 **Version 1.9.1** - March 14, 2026
 - Character creation now sends a new message per step instead of editing in place
 - Players can scroll back to review previous selections during creation
